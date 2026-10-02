@@ -133,3 +133,60 @@ async def test_run_existente_es_error(repo, tmp_path):
     await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
     with pytest.raises(FileExistsError):
         await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+
+
+# --- Pruebas de regresión añadidas tras la revisión de la Tarea 6 (no son parte
+# del guion normativo del brief; cubren los dos bugs reales que encontró el
+# revisor) -----------------------------------------------------------------
+
+
+def _redactor_borrador_barato(agente, instancia, encargo, ctx):
+    (ctx.salida / "articulo.md").write_text("# Artículo (de pega)\n")
+    return Resultado("terminado", coste_usd=0.01)
+
+
+def _redactor_revision_cara(agente, instancia, encargo, ctx):
+    (ctx.salida / "articulo.md").write_text("# Artículo revisado (de pega)\n")
+    return Resultado("terminado", coste_usd=10.0)
+
+
+async def test_tope_de_coste_no_cuenta_una_vuelta_que_nunca_se_lanzo(repo, tmp_path):
+    """Bug real: el coste se dispara DURANTE la revisión de la vuelta 1 (la
+    redactor caro cuesta 10 contra un tope de 5); la vuelta 2 no debe contar
+    como hecha ni aparecer en el jsonl, porque su verificador+novato nunca
+    llegan a lanzarse -- el tope se comprueba antes de intentarlos."""
+    lanzar = hacer_lanzar_falso({
+        "verificador": [_verificacion_con_fallos],
+        "redactor": [_redactor_borrador_barato, _redactor_revision_cara],
+    })
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1", tope_usd=5, max_vueltas=5)
+    assert fin["motivo"] == "tope_coste"
+    assert fin["vueltas"] == 1
+
+    evs = eventos(tmp_path / "s")
+    orden = lanzados(evs)
+    assert orden.count("verificador") == 1 and orden.count("novato") == 1
+    assert [e["n"] for e in evs if e["tipo"] == "vuelta"] == [1]
+
+
+async def test_excepcion_en_lanzar_se_registra_en_el_log(repo, tmp_path, monkeypatch):
+    """La excepción de un `lanzar` inyectado (aquí, de pega; en producción,
+    cualquier fallo del SDK real -- auth, rate limit, red) no debe desaparecer
+    sin rastro al convertirse en Resultado('error'): tiene que pasar por
+    `obtener_log().exception(...)` antes."""
+    llamadas = []
+
+    class _LogFalso:
+        def exception(self, *args, **kwargs):
+            llamadas.append((args, kwargs))
+
+    monkeypatch.setattr("enjambre.orquestar.obtener_log", lambda: _LogFalso())
+
+    def revienta(*a):
+        raise RuntimeError("boom")
+
+    fin = await orquestar(
+        repo, tmp_path / "s", hacer_lanzar_falso({"lector-de-pieza:a-uno": [revienta]}), run="r1"
+    )
+    assert fin["motivo"] == "fallo:lector-de-pieza:a-uno:error"
+    assert llamadas, "obtener_log().exception(...) no se llamó al convertir la excepción en Resultado('error')"

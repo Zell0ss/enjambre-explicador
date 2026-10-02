@@ -50,6 +50,16 @@ class _Coste:
     total: float = 0.0
 
 
+def _comprueba_tope(coste: _Coste, tope_usd: float) -> None:
+    """Para el run si el coste acumulado ya pasó el tope (D9) -- antes de
+    lanzar nada. La usa tanto `_paso` (antes de cada agente suelto) como el
+    bucle de vueltas (antes de empezar una vuelta: si el tope ya salta aquí,
+    ni el evento `vuelta` ni el contador de vueltas deben llegar a existir
+    para esa `n`, porque su verificador+novato nunca se intentan)."""
+    if coste.total > tope_usd:
+        raise _ParaRun("tope_coste")
+
+
 def _encargo(rol: str, repo: Path, salida: Path, **campos: object) -> str:
     """Construye el encargo (`CLAVE=valor`, una por línea) de un lanzamiento.
 
@@ -93,8 +103,7 @@ async def _paso(
     deja pasar sin tocar, para que una cancelación real llegue hasta el
     `try/finally` de `orquestar`.
     """
-    if coste.total > tope_usd:
-        raise _ParaRun("tope_coste")
+    _comprueba_tope(coste, tope_usd)
 
     ctx.eventos.emitir(
         "lanzado", instancia, rol=agente.rol, modelo_pedido=agente.modelo, encargo=encargo
@@ -102,8 +111,21 @@ async def _paso(
     try:
         resultado = await asyncio.wait_for(lanzar(agente, instancia, encargo, ctx), timeout=timeout_s)
     except TimeoutError:
+        # Diagnóstico: sin esto, un timeout del SDK real (Tarea 7) solo deja
+        # "estado_final: timeout" en el jsonl, sin rastro de qué tardó tanto.
+        # Mensaje ya formateado (f-string), no %s/%r: el logger de LogCentral
+        # es loguru, que interpola con `{}` (y solo si se le pasan args
+        # aparte), no con el %-estilo de `logging` -- pasar `instancia` como
+        # arg posicional aquí se quedaría sin sustituir en el JSON de salida.
+        obtener_log().exception(f"lanzar {instancia}: timeout tras {timeout_s}s")
         resultado = Resultado("timeout")
     except Exception:
+        # Idem: sin registrar aquí, un error de autenticación/rate-limit/red
+        # del SDK real se convierte en un "error" opaco, sin tipo ni mensaje,
+        # ni en el jsonl (que solo guarda estado_final) ni en ningún otro
+        # sitio -- indepurable en producción aunque sea inofensivo con el
+        # `lanzar` falso de esta tarea.
+        obtener_log().exception(f"lanzar {instancia}: excepción")
         resultado = Resultado("error")
 
     coste.total += resultado.coste_usd
@@ -234,6 +256,15 @@ async def orquestar(
         # --- vueltas de verificación / revisión --------------------------------
         n = 1
         while True:
+            # Comprobar el tope de coste ANTES de emitir `vuelta` y de contar
+            # esta `n` como una vuelta hecha: si una revisión anterior ya lo
+            # agotó, el verificador+novato de esta vuelta nunca se intentan,
+            # así que ni el evento `vuelta` ni `vueltas_hechas` deben existir
+            # para ella (bug real: sin este chequeo aquí, `_paso` seguía
+            # frenando a verificador/novato dentro del `gather` de más abajo,
+            # pero `vueltas_hechas = n` ya se había ejecutado para una vuelta
+            # que nunca llegó a lanzar nada).
+            _comprueba_tope(coste, tope_usd)
             eventos.emitir("vuelta", n=n)
             r_ver, r_nov = await asyncio.gather(
                 lanza("verificador", "verificador", VUELTA=n),
