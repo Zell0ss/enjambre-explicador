@@ -1,0 +1,4 @@
+claude-agent-sdk==0.2.163
+pytest==9.1.1
+pytest-asyncio==1.4.0
+-e /data/logcentral/packages/client
