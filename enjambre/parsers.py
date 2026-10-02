@@ -48,11 +48,7 @@ def ids_de_piezas(texto: str) -> list[str]:
     while i < len(lines):
         line = lines[i]
 
-        # Skip empty lines and stop at next section
-        if not line.strip():
-            i += 1
-            continue
-
+        # Any line not starting with | terminates the table, including blank lines
         if not line.startswith("|"):
             # End of table
             break

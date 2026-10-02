@@ -30,6 +30,23 @@ def test_ids_ilegibles(texto):
         ids_de_piezas(texto)
 
 
+def test_blank_line_terminates_table_scan():
+    """Regression test: blank line inside table must terminate scan, not skip to stray row."""
+    # Stray row after blank line should NOT be included in ids
+    t = (
+        "## Resumen\n"
+        "| Id | Pieza | R |\n"
+        "|---|---|---|\n"
+        "| uno | a | b |\n"
+        "\n"
+        "| stray-row | x | y |\n"
+        "\n"
+        "## Otra\n"
+    )
+    # Should only contain 'uno', not 'stray-row'
+    assert ids_de_piezas(t) == ["uno"]
+
+
 def test_fallos_reales():
     assert fallos((FIX / "verificacion.md").read_text()) == 0
 
