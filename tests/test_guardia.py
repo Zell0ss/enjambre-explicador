@@ -77,3 +77,45 @@ def test_ruta_de():
     assert ruta_de("Grep", {"pattern": "def ", "path": "/a"}) == "/a"
     assert ruta_de("Grep", {"pattern": "def "}) is None
     assert ruta_de("Glob", {"pattern": "**/*.py"}) is None
+
+
+# --- Regresión tras revisión de la tarea 3 (no normativos del brief original) ---
+#
+# El revisor encontró dos huecos adversariales reales:
+# 1. "~" sin expandir cae bajo `salida` literalmente (es el directorio
+#    "salida/~/...") y se aprobaba; si la tool real que toca disco expande
+#    "~" a $HOME antes de escribir/leer, el guardia estaría juzgando una
+#    ruta distinta de la que se usa de verdad.
+# 2. Entradas malformadas (byte nulo, bucle de symlinks, tipos inesperados)
+#    hacían que `permitido()`/`ruta_de()` lanzaran una excepción en vez de
+#    denegar — inaceptable en un hook `PreToolUse` (tarea 7), donde eso
+#    tiraría el run entero en vez de bloquear una sola tool call.
+CASOS_REGRESION = [
+    # "~" sin resolver: ni al principio ni como segmento intermedio.
+    ("redactor", "Read", "~/.ssh/id_rsa", False),
+    ("cartografo", "Read", "R:~/x", False),
+    # byte nulo: Path.resolve() lanza ValueError si no se captura.
+    ("cartografo", "Read", "/tmp/x\x00y", False),
+]
+
+
+@pytest.mark.parametrize("rol,herramienta,ruta,esperado", CASOS_REGRESION)
+def test_tabla_del_guardia_regresion(dirs, rol, herramienta, ruta, esperado):
+    repo, salida = dirs
+    ok, motivo = permitido(rol, herramienta, _ruta(ruta, repo, salida), repo, salida)
+    assert ok is esperado
+    assert (motivo == "") is esperado
+
+
+def test_symlink_en_bucle_no_rompe_el_guardia(dirs):
+    repo, salida = dirs
+    bucle = salida / "bucle"
+    bucle.symlink_to(bucle)  # symlink a sí mismo: resolve() falla (ELOOP)
+    ok, motivo = permitido("redactor", "Read", str(bucle), repo, salida)
+    assert ok is False
+    assert motivo != ""
+
+
+def test_ruta_de_valor_no_string_es_none():
+    assert ruta_de("Read", {"file_path": 123}) is None
+    assert ruta_de("Write", {"file_path": None}) is None

@@ -21,6 +21,14 @@ Tabla de permisos (spec §3.3):
 
 Glob/Grep sin ruta explícita (`ruta=None`) se evalúan sobre `cwd` (= `salida`).
 Una herramienta que no está en la tabla (p.ej. `Bash`) se deniega siempre.
+
+Endurecido tras revisión (D8): cualquier ruta con un segmento literal `~` se
+deniega sin resolver (evita que el guardia y la tool que de verdad toca
+disco interpreten rutas distintas si esa tool expande `~` a `$HOME`); y
+cualquier error al construir/resolver la ruta (byte nulo, bucle de
+symlinks, entrada con un tipo inesperado) se traduce a una denegación en
+vez de propagar la excepción — este guardia corre dentro de un hook
+`PreToolUse`, donde una excepción sin capturar tiraría el run entero.
 """
 
 from pathlib import Path
@@ -57,11 +65,14 @@ NOVATO_ESCRIBIR = "dudas.md"
 
 
 def ruta_de(herramienta: str, entrada: dict) -> str | None:
-    """Saca la ruta de la entrada de una tool, o None si no aplica/falta."""
+    """Saca la ruta de la entrada de una tool, o None si no aplica/falta/no es texto."""
     campo = _CAMPO_RUTA.get(herramienta)
     if campo is None:
         return None
-    return entrada.get(campo)
+    valor = entrada.get(campo)
+    # Un valor no-string (entrada malformada) se trata como "sin ruta", no
+    # como un TypeError que tumbe a permitido() más adelante.
+    return valor if isinstance(valor, str) else None
 
 
 def permitido(
@@ -89,24 +100,41 @@ def permitido(
     if regla is None:
         return False, f"rol '{rol}' desconocido"
 
-    # Ruta efectiva: sin ruta explícita, se evalúa el cwd (= salida).
-    objetivo = Path(ruta) if ruta is not None else salida
-    if not objetivo.is_absolute():
-        objetivo = salida / objetivo
+    try:
+        # "~" se deniega sin más, antes de tocar nada: no es absoluta, así
+        # que sin este chequeo se compondría como el directorio literal
+        # "salida/~/..." (que SÍ cae bajo salida) y se aprobaría. Si el SDK
+        # real expande "~" a $HOME antes de tocar disco (habitual en
+        # shells/CLIs), el guardia estaría juzgando una ruta distinta de la
+        # que realmente se toca. Ningún uso legítimo del enjambre necesita
+        # "~", así que fail-closed.
+        if ruta is not None and "~" in Path(ruta).parts:
+            return False, "ruta con '~' no permitida"
 
-    resuelta = objetivo.resolve()
-    repo_r = repo.resolve()
-    salida_r = salida.resolve()
+        # Ruta efectiva: sin ruta explícita, se evalúa el cwd (= salida).
+        objetivo = Path(ruta) if ruta is not None else salida
+        if not objetivo.is_absolute():
+            objetivo = salida / objetivo
 
-    if regla == "exacto":
-        nombre = NOVATO_LEER if categoria == "leer" else NOVATO_ESCRIBIR
-        permitido_ok = resuelta == (salida_r / nombre).resolve()
-    elif regla == "salida":
-        permitido_ok = resuelta.is_relative_to(salida_r)
-    elif regla == "ambos":
-        permitido_ok = resuelta.is_relative_to(repo_r) or resuelta.is_relative_to(salida_r)
-    else:  # pragma: no cover - defensivo, MURO no produce otros valores
-        permitido_ok = False
+        resuelta = objetivo.resolve()
+        repo_r = repo.resolve()
+        salida_r = salida.resolve()
+
+        if regla == "exacto":
+            nombre = NOVATO_LEER if categoria == "leer" else NOVATO_ESCRIBIR
+            permitido_ok = resuelta == (salida_r / nombre).resolve()
+        elif regla == "salida":
+            permitido_ok = resuelta.is_relative_to(salida_r)
+        elif regla == "ambos":
+            permitido_ok = resuelta.is_relative_to(repo_r) or resuelta.is_relative_to(salida_r)
+        else:  # pragma: no cover - defensivo, MURO no produce otros valores
+            permitido_ok = False
+    except (OSError, ValueError, RuntimeError, TypeError):
+        # Ruta malformada (byte nulo, bucle de symlinks, tipo inesperado...):
+        # denegar en vez de propagar. Este guardia se usa como hook
+        # PreToolUse (tarea 7); una excepción sin capturar aquí tiraría toda
+        # la ejecución del agente en vez de bloquear solo esa tool call.
+        return False, "ruta no válida"
 
     if permitido_ok:
         return True, ""
