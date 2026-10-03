@@ -119,3 +119,55 @@ def test_symlink_en_bucle_no_rompe_el_guardia(dirs):
 def test_ruta_de_valor_no_string_es_none():
     assert ruta_de("Read", {"file_path": 123}) is None
     assert ruta_de("Write", {"file_path": None}) is None
+
+
+# --- Parche de seguimiento a la tarea 3: eventos.jsonl/vueltas de solo
+# lectura, y forma del pattern de Glob (independiente de ruta_de()/hooks) ---
+
+CASOS_SOLO_LECTURA = [
+    # rol con escritura normalmente abierta a toda `salida` (cartografo) o
+    # con regla "exacto" estrecha (novato): ambos deniegan sobre
+    # eventos.jsonl/vueltas, aunque su tabla normal lo permitiría.
+    ("cartografo", "Write", "S:eventos.jsonl", False),
+    ("cartografo", "Write", "S:vueltas/1/verificacion.md", False),
+    ("cartografo", "Edit", "S:vueltas/2/dudas.md", False),
+    # no regresión: el resto de salida sigue escribible para cartografo.
+    ("cartografo", "Write", "S:mapa.md", True),
+    # novato: dudas.md (su único fichero de escritura) no está bajo
+    # vueltas/ ni es eventos.jsonl, así que su permiso normal no se toca.
+    ("novato", "Write", "S:dudas.md", True),
+    # novato ya estaba denegado aquí por su regla "exacto" (no es dudas.md);
+    # se comprueba igualmente para que la nueva regla no dependa de eso.
+    ("novato", "Write", "S:vueltas/1/x.md", False),
+]
+
+
+@pytest.mark.parametrize("rol,herramienta,ruta,esperado", CASOS_SOLO_LECTURA)
+def test_eventos_y_vueltas_son_de_solo_lectura(dirs, rol, herramienta, ruta, esperado):
+    repo, salida = dirs
+    (salida / "vueltas" / "1").mkdir(parents=True, exist_ok=True)
+    (salida / "vueltas" / "2").mkdir(parents=True, exist_ok=True)
+    ok, motivo = permitido(rol, herramienta, _ruta(ruta, repo, salida), repo, salida)
+    assert ok is esperado
+    assert (motivo == "") is esperado
+
+
+CASOS_GLOB_PATRON = [
+    # patron con ".." o absoluto: denegado con independencia del rol,
+    # aunque cartografo tenga lectura abierta a repo+salida.
+    ("cartografo", "../../../etc/*", False),
+    ("cartografo", "/etc/*", False),
+    # patrón relativo normal, sin "..": no regresión.
+    ("cartografo", "**/*.py", True),
+    ("cartografo", "backend/**/*.py", True),
+]
+
+
+@pytest.mark.parametrize("rol,patron,esperado", CASOS_GLOB_PATRON)
+def test_glob_patron_fuera_del_muro(dirs, rol, patron, esperado):
+    repo, salida = dirs
+    # ruta=None: Glob sin path explícito se evalúa sobre cwd/salida (ya
+    # permitido para cartografo); lo que se comprueba aquí es `patron`.
+    ok, motivo = permitido(rol, "Glob", None, repo, salida, patron=patron)
+    assert ok is esperado
+    assert (motivo == "") is esperado

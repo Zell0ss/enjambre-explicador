@@ -29,6 +29,13 @@ cualquier error al construir/resolver la ruta (byte nulo, bucle de
 symlinks, entrada con un tipo inesperado) se traduce a una denegación en
 vez de propagar la excepción — este guardia corre dentro de un hook
 `PreToolUse`, donde una excepción sin capturar tiraría el run entero.
+
+Parche de seguimiento a la revisión de la tarea 3: `eventos.jsonl` y
+`vueltas/` (los registros autoritativos del orquestador bajo `salida`,
+D13) son de solo lectura para todo rol, aunque su regla de muro le dé
+escritura en `salida` entera. Y el `pattern` de `Glob` (parámetro opcional
+`patron`, aún no conectado a ningún hook real) se deniega si es absoluto
+o contiene un segmento `..`, con independencia del rol.
 """
 
 from pathlib import Path
@@ -76,7 +83,12 @@ def ruta_de(herramienta: str, entrada: dict) -> str | None:
 
 
 def permitido(
-    rol: str, herramienta: str, ruta: str | None, repo: Path, salida: Path
+    rol: str,
+    herramienta: str,
+    ruta: str | None,
+    repo: Path,
+    salida: Path,
+    patron: str | None = None,
 ) -> tuple[bool, str]:
     """
     Decide si `rol` puede usar `herramienta` sobre `ruta`.
@@ -85,6 +97,13 @@ def permitido(
     es el cwd del agente. Las rutas relativas se resuelven contra `salida`.
     Siempre se resuelve (`Path.resolve()`) antes de comparar con
     `is_relative_to`, para que `..` y los symlinks no se salten el muro.
+
+    `patron` es el `pattern` de un `Glob` (opcional, keyword): se deniega si
+    es absoluto o si alguno de sus segmentos es `..`, con independencia del
+    rol — es una comprobación sobre la forma del patrón, no sobre quién
+    pregunta (mismo espíritu que la denegación de `..`/absolutas de más
+    abajo). No se toca `ruta_de()` ni ningún hook real: eso es tarea aparte
+    de `lanzador.py`.
 
     Devuelve (ok, motivo); motivo es una frase corta en español, vacía si ok.
     """
@@ -101,6 +120,14 @@ def permitido(
         return False, f"rol '{rol}' desconocido"
 
     try:
+        # Forma del patrón de Glob, independiente del rol: un patrón
+        # absoluto o con ".." lista fuera del muro aunque ruta=None lo
+        # evaluara sobre cwd/salida (ese es un chequeo distinto, de más
+        # abajo). Entrada malformada (no string) cae al except general.
+        if herramienta == "Glob" and patron is not None:
+            if patron.startswith("/") or ".." in patron.split("/"):
+                return False, "patrón de Glob fuera del muro"
+
         # "~" se deniega sin más, antes de tocar nada: no es absoluta, así
         # que sin este chequeo se compondría como el directorio literal
         # "salida/~/..." (que SÍ cae bajo salida) y se aprobaría. Si el SDK
@@ -120,6 +147,18 @@ def permitido(
         repo_r = repo.resolve()
         salida_r = salida.resolve()
 
+        # eventos.jsonl y vueltas/ son los registros autoritativos del
+        # orquestador (D13), no artefactos de un agente: ningún rol escribe
+        # ahí, aunque su regla de muro le dé "salida" entero (cartografo,
+        # verificador...) o incluso cuando su regla "exacto" coincidiera por
+        # casualidad de nombre. Se comprueba contra la ruta ya resuelta, así
+        # que un symlink o un ".." dentro de salida tampoco lo esquiva.
+        if categoria == "escribir" and (
+            resuelta == salida_r / "eventos.jsonl"
+            or resuelta.is_relative_to(salida_r / "vueltas")
+        ):
+            return False, "eventos.jsonl y vueltas/ son de solo lectura para los agentes"
+
         if regla == "exacto":
             nombre = NOVATO_LEER if categoria == "leer" else NOVATO_ESCRIBIR
             permitido_ok = resuelta == (salida_r / nombre).resolve()
@@ -129,7 +168,7 @@ def permitido(
             permitido_ok = resuelta.is_relative_to(repo_r) or resuelta.is_relative_to(salida_r)
         else:  # pragma: no cover - defensivo, MURO no produce otros valores
             permitido_ok = False
-    except (OSError, ValueError, RuntimeError, TypeError):
+    except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
         # Ruta malformada (byte nulo, bucle de symlinks, tipo inesperado...):
         # denegar en vez de propagar. Este guardia se usa como hook
         # PreToolUse (tarea 7); una excepción sin capturar aquí tiraría toda
