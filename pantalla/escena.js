@@ -20,6 +20,18 @@
 // hacerlo explícito por parámetros.
 
 import { inicial, aplicar, ROLES } from "./estado.js";
+import {
+  SPRITES,
+  FONDO,
+  LORO,
+  COLOR_TEXTO,
+  ALTO_GLIFO,
+  ANCHO_PERSONAJE,
+  ALTO_PERSONAJE,
+  dibujar,
+  dibujarTexto,
+  medirTexto,
+} from "./sprites.js";
 
 // ---------------------------------------------------------------------------
 // Estado de módulo: una sola fuente de verdad para pintar/alimentar, como
@@ -41,6 +53,7 @@ let _cab = null;
 
 export function arrancar(lienzo, cabecera) {
   _ctx = lienzo.getContext("2d");
+  _ctx.imageSmoothingEnabled = false; // pixel art: nunca interpolar al escalar (pedido de Josem)
   _escalarLienzo(lienzo);
   window.addEventListener("resize", () => _escalarLienzo(lienzo));
 
@@ -102,152 +115,195 @@ const ALTO = 200;
 const ALTO_ESCENA = 144;
 const ALTO_BARRA = 56;
 
-// Paleta provisional por estado (T11 la sustituye por fotogramas de sprite;
-// aquí solo gobierna el color de fondo del rectángulo de cada agente).
-const COLOR_ESTADO = {
-  esperando: "#5a6b7a",
-  leyendo: "#2f7fb8",
-  escribiendo: "#d98c27",
-  bloqueado: "#c23b3b",
-  terminado: "#3f9c56",
-};
-const COLOR_ESTADO_DEFECTO = "#888888";
+// Duración de cada fotograma de animación, en ms de `ahoraMs` (reloj
+// virtual en repetición -- avanza ×velocidad --, reloj real en directo).
+// `pintar` solo recibe ese instante, no la velocidad de reproducción, así
+// que a ×16 el ciclo de fotogramas se acelera en la misma proporción; para
+// que eso no resulte molesto se mantienen las diferencias entre
+// fotogramas pequeñas (parpadeo de "Zzz", vaivén de 1px de la herramienta,
+// el "!" de bloqueado que se enciende y apaga). No ha sido posible
+// comprobar a ojo, sin navegador, cómo se percibe exactamente a ×16.
+const MS_POR_FOTOGRAMA = 450;
 
-// Color de texto por rol, para el bocadillo (§5.3: "cada personaje tiene un
-// color de texto"). `lector-de-pieza` cubre cualquier instancia de ese rol.
-const COLOR_ROL = {
-  cartografo: "#f2d06b",
-  despiezador: "#e8835a",
-  "lector-de-pieza": "#8fd0e8",
-  trazador: "#a9e88f",
-  redactor: "#d6a9e8",
-  verificador: "#e8e08f",
-  novato: "#ff9ecb",
-};
-const COLOR_ROL_DEFECTO = "#ffffff";
-
-// Posiciones fijas en cubierta (§5.3) para los roles únicos; coordenadas del
-// rectángulo 20×20 en la escena (320×144). Provisional: T11 puede ajustarlas
-// al tamaño real del sprite.
-const POSICION_ROL = {
-  cartografo: { x: 20, y: 18 },
-  despiezador: { x: 20, y: 54 },
-  novato: { x: 20, y: 100 },
-  trazador: { x: 272, y: 18 },
-  redactor: { x: 272, y: 54 },
-  verificador: { x: 272, y: 100 },
-};
-
-// Fila de lectores (hasta 8, tope del despiezador; si llegan más se apilan
-// sin rediseñar — §5.3).
-const LECTORES_FILA_Y = 70;
-const LECTORES_FILA_X0 = 90;
-const LECTORES_FILA_PASO = 22;
-
-function _posicionAgente(rol, indiceLector) {
-  if (rol === "lector-de-pieza") {
-    const i = indiceLector % 8;
-    const pila = Math.floor(indiceLector / 8); // apilar si hay más de 8
-    return { x: LECTORES_FILA_X0 + i * LECTORES_FILA_PASO, y: LECTORES_FILA_Y + pila * 10 };
-  }
-  return POSICION_ROL[rol] || { x: 150, y: 70 };
+function _fotogramaDe(frames, ahoraMs) {
+  if (!frames || frames.length === 0) return null;
+  const i = Math.floor(Math.max(0, ahoraMs) / MS_POR_FOTOGRAMA) % frames.length;
+  return frames[i];
 }
 
+// Mobiliario de cubierta y el puesto del agente que trabaja en él (§5.3).
+// `fx,fy` posiciona el elemento de FONDO; `x,y` ancla la esquina superior
+// izquierda del sprite de 24×32 del agente, justo encima/detrás del
+// mueble para que quede a sus pies. Coordenadas elegidas a mano sobre el
+// lienzo de 320×144 (cielo 0-71, cubierta 72-143); revisadas con una
+// captura real (ver informe de la tarea), no solo a ojo de código.
+// (x,y de cada agente separados al menos ~40px en x o en y del resto: con
+// 24×32 por personaje, dos puestos en la misma columna y menos de eso de
+// diferencia en y se fusionan en un solo tótem apilado -- visto en la
+// primera captura real contra el servidor, corregido aquí.)
+const PUESTOS = {
+  despiezador: { furn: "cocina", fx: 12, fy: 50, x: 10, y: 46 }, // cocina, atrás a babor
+  redactor: { furn: "escritorio", fx: 254, fy: 48, x: 252, y: 46 }, // escritorio, atrás a estribor
+  cartografo: { furn: "mesaMapa", fx: 46, fy: 100, x: 44, y: 86 }, // mesa del mapa, delante
+  verificador: { furn: "barriles", fx: 238, fy: 106, x: 236, y: 92 }, // barriles, delante centro-estribor
+  trazador: { furn: "timon", fx: 288, fy: 98, x: 286, y: 80 }, // timón, delante a estribor
+  novato: { furn: null, x: 146, y: 10 }, // cofa, en lo alto del mástil
+};
+
+const MASTIL_X = 140;
+const MASTIL_Y = 0;
+const MESA_LARGA_X = 84;
+const MESA_LARGA_Y = 104;
+
+// Fila de lectores sobre la mesa larga (hasta 8, tope del despiezador; si
+// llegan más se apilan encima, sin rediseñar — §5.3).
+const LECTORES_PASO_X = 18;
+
+function _posicionLector(indice) {
+  const i = indice % 8;
+  const pila = Math.floor(indice / 8);
+  return { x: MESA_LARGA_X + 6 + i * LECTORES_PASO_X, y: MESA_LARGA_Y - 28 - pila * 10 };
+}
+
+function _posicionAgente(rol, indiceLector) {
+  if (rol === "lector-de-pieza") return _posicionLector(indiceLector);
+  const puesto = PUESTOS[rol];
+  return puesto ? { x: puesto.x, y: puesto.y } : { x: 150, y: 70 };
+}
+
+// Farolillos fijos que parpadean (2 fotogramas en FONDO.farolillo).
+const FAROLES = [
+  { x: 36, y: 28 },
+  { x: 150, y: 24 },
+  { x: 288, y: 30 },
+];
+
 /**
- * pintar(ctx2d, estado, ahoraMs) — render provisional con rectángulos de
- * color. Pura en el sentido de que solo lee `estado`/`ahoraMs` y escribe en
- * `ctx2d` (y en las cachés de zonas de módulo, para hit-test de
+ * pintar(ctx2d, estado, ahoraMs) — dibuja la escena entera con los sprites
+ * de `sprites.js`. Pura en el sentido de que solo lee `estado`/`ahoraMs` y
+ * escribe en `ctx2d` (y en las cachés de zonas de módulo, para hit-test de
  * click/hover); no hace fetch ni toca `location`.
  */
 export function pintar(ctx2d, estado, ahoraMs) {
   _zonasAgentes = [];
   _zonasInventario = [];
 
-  // Fondo liso de la escena y de la barra, bien diferenciados (de noche /
-  // madera de la barra SCUMM) -- el arte real es la Tarea 11.
-  ctx2d.fillStyle = "#101826";
-  ctx2d.fillRect(0, 0, ANCHO, ALTO_ESCENA);
+  // --- Fondo: cielo, cubierta y mobiliario fijo del barco -----------------
+  dibujar(ctx2d, _fotogramaDe(FONDO.cielo, ahoraMs), 0, 0);
+  dibujar(ctx2d, _fotogramaDe(FONDO.cubierta, ahoraMs), 0, 72);
+  dibujar(ctx2d, _fotogramaDe(FONDO.mastil, ahoraMs), MASTIL_X, MASTIL_Y);
+  dibujar(ctx2d, _fotogramaDe(FONDO.mesaLarga, ahoraMs), MESA_LARGA_X, MESA_LARGA_Y);
+  for (const puesto of Object.values(PUESTOS)) {
+    if (puesto.furn) dibujar(ctx2d, _fotogramaDe(FONDO[puesto.furn], ahoraMs), puesto.fx, puesto.fy);
+  }
+  for (const farol of FAROLES) dibujar(ctx2d, _fotogramaDe(FONDO.farolillo, ahoraMs), farol.x, farol.y);
+
+  // Fondo liso de la barra SCUMM (el arte ahí es solo este rectángulo: la
+  // barra en sí no forma parte de la escena 320×144).
   ctx2d.fillStyle = "#3a2a1e";
   ctx2d.fillRect(0, ALTO_ESCENA, ANCHO, ALTO_BARRA);
 
-  ctx2d.textBaseline = "top";
-  ctx2d.font = "8px monospace";
-
-  // Agentes: orden de inserción de `estado.agentes` ya es estable (claves
-  // string), así que basta un contador para numerar a los lectores en fila.
+  // --- Agentes --------------------------------------------------------------
+  // Orden de inserción de `estado.agentes` ya es estable (claves string),
+  // así que basta un contador para numerar a los lectores en fila.
   let indiceLector = 0;
   for (const [instancia, agente] of Object.entries(estado.agentes || {})) {
     const rol = agente.rol;
     const indice = rol === "lector-de-pieza" ? indiceLector++ : 0;
     const pos = _posicionAgente(rol, indice);
-    const w = 18;
-    const h = 20;
+    const frames = SPRITES[rol] && SPRITES[rol][agente.estado];
+    const fotograma = _fotogramaDe(frames, ahoraMs);
+    if (fotograma) dibujar(ctx2d, fotograma, pos.x, pos.y);
 
-    ctx2d.fillStyle = COLOR_ESTADO[agente.estado] || COLOR_ESTADO_DEFECTO;
-    ctx2d.fillRect(pos.x, pos.y, w, h);
-    ctx2d.strokeStyle = "#000000";
-    ctx2d.strokeRect(pos.x + 0.5, pos.y + 0.5, w - 1, h - 1);
+    _zonasAgentes.push({ x: pos.x, y: pos.y, w: ANCHO_PERSONAJE, h: ALTO_PERSONAJE, instancia, agente });
 
-    _zonasAgentes.push({ x: pos.x, y: pos.y, w, h, instancia, agente });
-
-    // Bocadillo: se borra a los ~3s de `bocadillo.t` (§5.3).
+    // Bocadillo centrado sobre la cabeza, recortado al lienzo; se borra a
+    // los ~3s de `bocadillo.t` (§5.3).
     if (agente.bocadillo && agente.bocadillo.t) {
       const edadMs = ahoraMs - Date.parse(agente.bocadillo.t);
       if (edadMs >= 0 && edadMs < 3000) {
-        ctx2d.fillStyle = COLOR_ROL[rol] || COLOR_ROL_DEFECTO;
-        _dibujarTextoRecortado(ctx2d, agente.bocadillo.texto, pos.x - 10, pos.y - 9, 48);
+        _dibujarBocadillo(
+          ctx2d,
+          agente.bocadillo.texto,
+          pos.x + ANCHO_PERSONAJE / 2,
+          pos.y - 2,
+          COLOR_TEXTO[rol] || "#ffffff",
+        );
       }
     }
   }
 
-  // El loro: vuela al agente denegado y grazna, visible ~3s (misma regla que
-  // los bocadillos, usando el mismo campo `t`).
+  // --- El loro: vuela del borde del lienzo al agente denegado -------------
+  // (misma regla de visibilidad ~3s que los bocadillos, mismo campo `t`).
   if (estado.loro && estado.loro.t) {
     const edadMs = ahoraMs - Date.parse(estado.loro.t);
     if (edadMs >= 0 && edadMs < 3000) {
       const zona = _zonasAgentes.find((z) => z.instancia === estado.loro.agente);
-      const px = zona ? zona.x + zona.w + 2 : 4;
-      const py = zona ? zona.y - 10 : 4;
-      ctx2d.fillStyle = "#39b54a";
-      ctx2d.fillRect(px, py, 6, 6);
-      ctx2d.fillStyle = "#ffffff";
-      _dibujarTextoRecortado(ctx2d, "¡Prohibido!", px - 20, py - 9, 60);
+      const destino = zona ? { x: zona.x + zona.w + 1, y: zona.y - 2 } : { x: ANCHO - 18, y: 10 };
+      const origen = { x: ANCHO - 2, y: 4 };
+      const t = Math.min(1, edadMs / 800); // 800ms de vuelo, luego posado
+      const px = Math.round(origen.x + (destino.x - origen.x) * t);
+      const py = Math.round(origen.y + (destino.y - origen.y) * t);
+      const frames = t < 1 ? LORO.volando : LORO.posado;
+      dibujar(ctx2d, _fotogramaDe(frames, ahoraMs), px, py, destino.x < origen.x);
+      if (t >= 1) _dibujarBocadillo(ctx2d, "¡Prohibido!", px + 7, py - 1, "#ff7a7a");
     }
   }
 
-  // Barra inferior: bitácora (últimas 5 líneas) a la izquierda...
-  ctx2d.fillStyle = "#e8e0c8";
-  ctx2d.font = "7px monospace";
+  // --- Barra inferior: bitácora a la izquierda... --------------------------
   const lineas = (estado.bitacora || []).slice(-5);
   lineas.forEach((linea, i) => {
-    _dibujarTextoRecortado(ctx2d, linea, 4, ALTO_ESCENA + 4 + i * 10, 220);
+    _dibujarTextoRecortado(ctx2d, linea, 4, ALTO_ESCENA + 4 + i * 9, 216, "#e8e0c8");
   });
 
-  // ...e inventario (un icono por fichero) a la derecha.
+  // ...e inventario a la derecha: un icono por fichero, con el nombre corto
+  // (basename) debajo para que no haga falta pasar el ratón para leerlo
+  // (pedido de Josem: "antes solo había iconos sin nombre"). El hover
+  // (`lienzo.title`, más abajo) sigue dando la ruta completa.
   const inventario = estado.inventario || [];
-  const colInicioX = 230;
-  const iconoLado = 16;
-  const porFila = Math.max(1, Math.floor((ANCHO - colInicioX - 4) / (iconoLado + 2)));
+  const colInicioX = 224;
+  const iconoLado = 14;
+  const pasoCol = 48;
+  const porFila = Math.max(1, Math.floor((ANCHO - colInicioX - 2) / pasoCol));
   inventario.forEach((item, i) => {
     const fila = Math.floor(i / porFila);
     const col = i % porFila;
-    const x = colInicioX + col * (iconoLado + 2);
-    const y = ALTO_ESCENA + 4 + fila * (iconoLado + 2);
+    const x = colInicioX + col * pasoCol;
+    const y = ALTO_ESCENA + 3 + fila * (iconoLado + 11);
+    if (y > ALTO_ESCENA + ALTO_BARRA - iconoLado - 2) return; // sin sitio: no desborda el lienzo (§5.3, "no rediseñar")
     ctx2d.fillStyle = "#c8a24a";
     ctx2d.fillRect(x, y, iconoLado, iconoLado);
     ctx2d.strokeStyle = "#000000";
     ctx2d.strokeRect(x + 0.5, y + 0.5, iconoLado - 1, iconoLado - 1);
+    const nombreCorto = (item.ruta || "").split("/").pop() || "?";
+    _dibujarTextoRecortado(ctx2d, nombreCorto, x, y + iconoLado + 1, pasoCol - 2, "#e8e0c8");
     _zonasInventario.push({ x, y, w: iconoLado, h: iconoLado, item });
   });
 }
 
-function _dibujarTextoRecortado(ctx2d, texto, x, y, anchoMax) {
+// Bocadillo de diálogo: centrado horizontalmente sobre `cx`, con el pie en
+// `yInferior`, recortado para no salirse del lienzo de 320 de ancho.
+function _dibujarBocadillo(ctx2d, texto, cx, yInferior, color) {
   if (!texto) return;
-  // Recorte tosco por caracteres (no hay medida real de fuente de bitmap
-  // todavía): suficiente para el render provisional de T10.
-  const maxChars = Math.max(1, Math.floor(anchoMax / 4));
-  const recortado = texto.length > maxChars ? texto.slice(0, maxChars - 1) + "…" : texto;
-  ctx2d.fillText(recortado, x, y);
+  const ancho = medirTexto(texto);
+  const x = Math.max(1, Math.min(ANCHO - ancho - 1, Math.round(cx - ancho / 2)));
+  const y = Math.max(0, yInferior - ALTO_GLIFO);
+  dibujarTexto(ctx2d, texto, x, y, color);
+}
+
+// Recorte por medida real de la fuente de mapa de bits (ya no por conteo
+// tosco de caracteres, como en el render provisional de T10): añade un "."
+// final mientras no quepa.
+function _dibujarTextoRecortado(ctx2d, texto, x, y, anchoMax, color) {
+  if (!texto) return;
+  let recortado = String(texto);
+  if (medirTexto(recortado) > anchoMax) {
+    while (recortado.length > 1 && medirTexto(recortado + ".") > anchoMax) {
+      recortado = recortado.slice(0, -1);
+    }
+    recortado = `${recortado}.`;
+  }
+  dibujarTexto(ctx2d, recortado, x, y, color);
 }
 
 // ---------------------------------------------------------------------------
