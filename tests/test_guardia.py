@@ -131,8 +131,16 @@ CASOS_SOLO_LECTURA = [
     ("cartografo", "Write", "S:eventos.jsonl", False),
     ("cartografo", "Write", "S:vueltas/1/verificacion.md", False),
     ("cartografo", "Edit", "S:vueltas/2/dudas.md", False),
+    # otro rol con escritura abierta a toda `salida` (no solo cartografo).
+    ("redactor", "Write", "S:eventos.jsonl", False),
+    ("redactor", "Edit", "S:vueltas/1/verificacion.md", False),
     # no regresión: el resto de salida sigue escribible para cartografo.
     ("cartografo", "Write", "S:mapa.md", True),
+    # no regresión: un directorio hermano cuyo nombre empieza igual que
+    # "vueltas" no debe caer en la denegación por un bug de prefijo de
+    # string en vez de "estar bajo" real (is_relative_to compara por
+    # partes de ruta, no por prefijo de texto).
+    ("cartografo", "Write", "S:vueltas_evil/foo.md", True),
     # novato: dudas.md (su único fichero de escritura) no está bajo
     # vueltas/ ni es eventos.jsonl, así que su permiso normal no se toca.
     ("novato", "Write", "S:dudas.md", True),
@@ -157,6 +165,13 @@ CASOS_GLOB_PATRON = [
     # aunque cartografo tenga lectura abierta a repo+salida.
     ("cartografo", "../../../etc/*", False),
     ("cartografo", "/etc/*", False),
+    # llave sin expandir: ningún segmento es literalmente "..", pero un
+    # motor de glob que expanda llaves antes de comparar (node-glob/
+    # minimatch) lo convertiría en "../etc/*". El chequeo por substring
+    # (no por segmento exacto) lo pilla igual.
+    ("cartografo", "{..,x}/etc/*", False),
+    # "~" en el patrón: mismo razonamiento que "~" en rutas normales (D8).
+    ("cartografo", "~/etc/*", False),
     # patrón relativo normal, sin "..": no regresión.
     ("cartografo", "**/*.py", True),
     ("cartografo", "backend/**/*.py", True),
@@ -171,3 +186,17 @@ def test_glob_patron_fuera_del_muro(dirs, rol, patron, esperado):
     ok, motivo = permitido(rol, "Glob", None, repo, salida, patron=patron)
     assert ok is esperado
     assert (motivo == "") is esperado
+
+
+def test_symlink_a_vueltas_no_esquiva_la_denegacion(dirs):
+    # Un symlink dentro de salida que apunta a vueltas/: escribir a través
+    # de él debe resolver a vueltas/ de verdad y denegarse igual, no solo
+    # la ruta literal "salida/vueltas/...".
+    repo, salida = dirs
+    (salida / "vueltas" / "1").mkdir(parents=True)
+    (salida / "atajo").symlink_to(salida / "vueltas")
+    ok, motivo = permitido(
+        "cartografo", "Write", str(salida / "atajo" / "1" / "verificacion.md"), repo, salida
+    )
+    assert ok is False
+    assert motivo != ""

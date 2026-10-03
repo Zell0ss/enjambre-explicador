@@ -33,9 +33,13 @@ vez de propagar la excepción — este guardia corre dentro de un hook
 Parche de seguimiento a la revisión de la tarea 3: `eventos.jsonl` y
 `vueltas/` (los registros autoritativos del orquestador bajo `salida`,
 D13) son de solo lectura para todo rol, aunque su regla de muro le dé
-escritura en `salida` entera. Y el `pattern` de `Glob` (parámetro opcional
-`patron`, aún no conectado a ningún hook real) se deniega si es absoluto
-o contiene un segmento `..`, con independencia del rol.
+escritura en `salida` entera; los objetivos protegidos también se resuelven
+antes de comparar, por si `salida/vueltas` fuera algún día un symlink. Y el
+`pattern` de `Glob` (parámetro opcional `patron`, aún no conectado a ningún
+hook real) se deniega si es absoluto o contiene el substring `..` o `~` en
+cualquier posición — substring y no segmento exacto, para que una llave sin
+expandir (p.ej. `"{..,x}/etc/*"`) no se salte el chequeo si el motor de
+glob real expande llaves antes de comparar — con independencia del rol.
 """
 
 from pathlib import Path
@@ -99,11 +103,14 @@ def permitido(
     `is_relative_to`, para que `..` y los symlinks no se salten el muro.
 
     `patron` es el `pattern` de un `Glob` (opcional, keyword): se deniega si
-    es absoluto o si alguno de sus segmentos es `..`, con independencia del
-    rol — es una comprobación sobre la forma del patrón, no sobre quién
-    pregunta (mismo espíritu que la denegación de `..`/absolutas de más
-    abajo). No se toca `ruta_de()` ni ningún hook real: eso es tarea aparte
-    de `lanzador.py`.
+    es absoluto o si contiene el substring `..` o `~` en cualquier
+    posición (substring, no segmento exacto tras partir por "/": una llave
+    sin expandir como `"{..,x}/etc/*"` no debe colarse si el motor de glob
+    real expande llaves antes de comparar), con independencia del rol — es
+    una comprobación sobre la forma del patrón, no sobre quién pregunta
+    (mismo espíritu que la denegación de `..`/absolutas/`~` de más abajo).
+    No se toca `ruta_de()` ni ningún hook real: eso es tarea aparte de
+    `lanzador.py`.
 
     Devuelve (ok, motivo); motivo es una frase corta en español, vacía si ok.
     """
@@ -124,8 +131,18 @@ def permitido(
         # absoluto o con ".." lista fuera del muro aunque ruta=None lo
         # evaluara sobre cwd/salida (ese es un chequeo distinto, de más
         # abajo). Entrada malformada (no string) cae al except general.
+        #
+        # ".." se busca como substring, no como segmento exacto tras
+        # partir por "/": un motor de glob que expanda llaves antes de
+        # comparar (node-glob/minimatch y similares) convertiría algo como
+        # "{..,x}/etc/*" en "../etc/*" sin que ningún segmento literal sea
+        # "..". Ningún patrón legítimo necesita el substring "..", así que
+        # denegarlo siempre es estrictamente más seguro y además cubre sin
+        # chequeo aparte el caso ".." a mitad de patrón. Mismo razonamiento
+        # para "~": si el motor real lo expande a $HOME, el guardia estaría
+        # juzgando un patrón distinto del que se usa de verdad (D8).
         if herramienta == "Glob" and patron is not None:
-            if patron.startswith("/") or ".." in patron.split("/"):
+            if patron.startswith("/") or ".." in patron or "~" in patron:
                 return False, "patrón de Glob fuera del muro"
 
         # "~" se deniega sin más, antes de tocar nada: no es absoluta, así
@@ -151,11 +168,16 @@ def permitido(
         # orquestador (D13), no artefactos de un agente: ningún rol escribe
         # ahí, aunque su regla de muro le dé "salida" entero (cartografo,
         # verificador...) o incluso cuando su regla "exacto" coincidiera por
-        # casualidad de nombre. Se comprueba contra la ruta ya resuelta, así
-        # que un symlink o un ".." dentro de salida tampoco lo esquiva.
+        # casualidad de nombre. Se comprueba contra la ruta ya resuelta, y
+        # también se resuelven los propios objetivos protegidos (mismo
+        # patrón que usa la regla "exacto" de novato más abajo): si
+        # "salida/vueltas" fuera alguna vez un symlink, comparar contra la
+        # ruta sin resolver dejaría pasar una escritura que en disco cae
+        # fuera de "salida/vueltas" tal cual.
+        eventos_r = (salida_r / "eventos.jsonl").resolve()
+        vueltas_r = (salida_r / "vueltas").resolve()
         if categoria == "escribir" and (
-            resuelta == salida_r / "eventos.jsonl"
-            or resuelta.is_relative_to(salida_r / "vueltas")
+            resuelta == eventos_r or resuelta.is_relative_to(vueltas_r)
         ):
             return False, "eventos.jsonl y vueltas/ son de solo lectura para los agentes"
 
