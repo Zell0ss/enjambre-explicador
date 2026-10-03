@@ -32,6 +32,7 @@ class Resultado:
     tokens_out: int = 0
     coste_usd: float = 0.0
     num_herramientas: int = 0
+    num_turns: int = 0  # De `ResultMessage.num_turns` (ver lanzador.Traductor.resultado()).
 
 
 @dataclass
