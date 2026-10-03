@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>enjambre — pantalla</title>
+<style>
+  :root {
+    color-scheme: dark;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0b0f14; /* fondo explícito del body, pedido por el plan */
+    color: #e8e0c8;
+    font-family: "Courier New", "DejaVu Sans Mono", monospace;
+    font-size: 14px;
+  }
+  body {
+    padding: 8px;
+    box-sizing: border-box;
+    min-height: 100vh;
+  }
+  header.cabecera {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    background: #1a2230;
+    border: 1px solid #333c4a;
+    border-radius: 4px;
+  }
+  header.cabecera .campo {
+    white-space: nowrap;
+  }
+  header.cabecera strong {
+    color: #f2d06b;
+  }
+  main {
+    width: 100%;
+  }
+  .lista-runs ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .lista-runs li {
+    padding: 4px 0;
+    border-bottom: 1px solid #222a35;
+  }
+  .lista-runs a {
+    color: #8fd0e8;
+    text-decoration: none;
+    margin-right: 6px;
+  }
+  .lista-runs a:hover {
+    text-decoration: underline;
+  }
+  .zona-lienzo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .lienzo-wrap {
+    /* El contenedor no fija tamaño: escena.js pone el width/height en px
+       del propio <canvas>, calculado al mayor entero que quepa. */
+    max-width: 100%;
+    overflow: auto;
+  }
+  #lienzo {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 1px solid #333c4a;
+  }
+  .controles {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 320px;
+  }
+  .controles button {
+    background: #1a2230;
+    color: #e8e0c8;
+    border: 1px solid #333c4a;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .controles button.activo {
+    border-color: #f2d06b;
+    color: #f2d06b;
+  }
+  .controles input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 80px;
+  }
+  .panel-lateral {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(360px, 100vw);
+    height: 100vh;
+    background: #141b24;
+    border-left: 1px solid #333c4a;
+    padding: 8px;
+    box-sizing: border-box;
+    overflow: auto;
+  }
+  .panel-lateral button {
+    background: #1a2230;
+    color: #e8e0c8;
+    border: 1px solid #333c4a;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-family: inherit;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .panel-lateral pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+  }
+  /* 360px de ancho sin scroll horizontal (plan, Tarea 10): nada aquí fija
+     un ancho mayor que 100vw; el lienzo se escala por JS a ×1 cuando no cabe
+     a ×3/×4 (ver escena.js:_escalarLienzo). */
+</style>
+</head>
+<body>
+<header id="cabecera" class="cabecera"></header>
+
+<main>
+  <div id="lista-runs" class="lista-runs"></div>
+
+  <div id="zona-lienzo" class="zona-lienzo" hidden>
+    <div class="lienzo-wrap">
+      <canvas id="lienzo" width="320" height="200"></canvas>
+    </div>
+
+    <div id="controles" class="controles">
+      <button id="btn-pausa" type="button">Pausa</button>
+      <button type="button" data-vel="1">×1</button>
+      <button type="button" data-vel="4">×4</button>
+      <button type="button" data-vel="16">×16</button>
+      <input id="barra" type="range" min="0" max="0" value="0" />
+    </div>
+  </div>
+</main>
+
+<aside id="panel-lateral" class="panel-lateral" hidden>
+  <button id="cerrar-panel" type="button">cerrar</button>
+  <pre id="panel-contenido"></pre>
+</aside>
+
+<script type="module">
+  import { arrancar } from "/static/escena.js";
+  arrancar(document.getElementById("lienzo"), document.getElementById("cabecera"));
+</script>
+</body>
+</html>
