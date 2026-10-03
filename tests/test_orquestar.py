@@ -56,6 +56,22 @@ async def test_encargos_sin_repo_para_redactor_y_novato(repo, tmp_path):
     assert "REPO=" in enc["verificador"] and "PIEZA=b-dos" in enc["lector-de-pieza:b-dos"]
 
 
+_LINEA_SALIDA_D18 = (
+    "Tu directorio de trabajo ya es SALIDA: donde tus instrucciones dicen SALIDA/x, usa x o la ruta absoluta."
+)
+
+
+async def test_encargo_aclara_salida_para_todos_los_roles(repo, tmp_path):
+    # D18: el novato parecía tomar "SALIDA/articulo.md" como ruta literal en
+    # vez de entender que su cwd ya es esa carpeta; la línea debe salir en
+    # TODOS los encargos, incluidos los de redactor/novato (que no ven REPO).
+    await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+    enc = {e["agente"]: e["encargo"] for e in eventos(tmp_path / "s") if e["tipo"] == "lanzado"}
+    assert enc  # hay al menos un lanzamiento
+    for agente, encargo in enc.items():
+        assert _LINEA_SALIDA_D18 in encargo, f"falta la línea D18 en el encargo de {agente}"
+
+
 def _verificacion_con_fallos(agente, instancia, encargo, ctx):
     (ctx.salida / "verificacion.md").write_text("## Resultado\n- Fallos: 2\n")
     return Resultado("terminado", coste_usd=0.01)
@@ -205,6 +221,50 @@ def test_salidas_por_defecto_es_absoluta_y_no_depende_del_cwd(monkeypatch, tmp_p
     esperado = Path(orquestar_mod.__file__).resolve().parent.parent / "salidas"
     assert analizador.get_default("salidas") == esperado
     assert analizador.parse_args(["--repo", "x"]).salidas == esperado
+
+
+# --- D16: borrar-y-exigir verificacion.md/dudas.md desde la vuelta 2 -------
+
+
+def _novato_escribe_dudas(agente, instancia, encargo, ctx):
+    (ctx.salida / "dudas.md").write_text("## Veredicto\n\n`no listo`\n")
+    return Resultado("terminado", coste_usd=0.01)
+
+
+def _novato_sin_dudas(agente, instancia, encargo, ctx):
+    return Resultado("terminado", coste_usd=0.01)  # no toca dudas.md
+
+
+async def test_novato_sin_dudas_en_vuelta_2_para_el_run_con_falta_dudas(repo, tmp_path):
+    """La tool `Write` real no reescribe un fichero no leído en la sesión, y
+    el novato no puede leer `dudas.md` (D2/D8): sin el borrado+exigencia de
+    D16, un novato que en la vuelta 2 no reescribe `dudas.md` seguiría
+    teniendo el `dudas.md` que dejó la vuelta 1 -- el run podría seguir
+    adelante leyendo en silencio una decisión vieja. Con D16 tiene que parar
+    con `falta:dudas.md` exactamente (no "aprobado" ni ningún otro motivo).
+
+    Guion: el verificador falla en la vuelta 1 (fuerza la vuelta 2); en la
+    vuelta 1 el novato sí escribe `dudas.md` (comportamiento normal, para no
+    confundir el caso con uno donde nunca se escribió nada); en la vuelta 2
+    el novato "olvida" escribirlo -- exactamente el escenario D16 describe
+    para una `Write` real rechazada."""
+    lanzar = hacer_lanzar_falso({
+        "verificador": [_verificacion_con_fallos],
+        "novato": [_novato_escribe_dudas, _novato_sin_dudas],
+    })
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin["motivo"] == "falta:dudas.md"
+    # La vuelta 1 completó normal y quedó archivada -- D16 no debe tocar la
+    # vuelta 1 en absoluto.
+    assert (tmp_path / "s" / "agora" / "r1" / "vueltas" / "1" / "dudas.md").exists()
+
+
+async def test_vuelta_1_no_se_ve_afectada_por_el_borrado_de_d16(repo, tmp_path):
+    """D16 actúa solo desde la vuelta >= 2: en la vuelta 1 no hay nada que
+    borrar (ni verificacion.md ni dudas.md existen todavía) y el run normal
+    de una sola vuelta debe seguir aprobando igual que antes del parche."""
+    fin = await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+    assert fin["motivo"] == "aprobado" and fin["vueltas"] == 1
 
 
 async def test_guion_con_entrada_asincrona(repo, tmp_path):
