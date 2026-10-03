@@ -77,6 +77,23 @@ function _indiceDesdeCaracter(ch) {
  */
 export function dibujar(ctx2d, fotograma, x, y, espejo = false) {
   if (!fotograma) return;
+  if (!Array.isArray(fotograma)) {
+    // No es una matriz de paleta, es un PNG real ya cargado (ver
+    // `cargarSpritesPersonajes` más abajo, D14: "sustituibles por PNG").
+    // `ctx2d.imageSmoothingEnabled = false` ya está puesto una vez en
+    // `arrancar` (escena.js); drawImage respeta eso igual que el fillRect
+    // de abajo respeta el escalado CSS entero.
+    if (espejo) {
+      ctx2d.save();
+      ctx2d.translate(x + fotograma.naturalWidth, y);
+      ctx2d.scale(-1, 1);
+      ctx2d.drawImage(fotograma, 0, 0);
+      ctx2d.restore();
+    } else {
+      ctx2d.drawImage(fotograma, x, y);
+    }
+    return;
+  }
   for (let fila = 0; fila < fotograma.length; fila++) {
     const cadena = fotograma[fila];
     const ancho = cadena.length;
@@ -317,6 +334,60 @@ function _construirEstadosRol(cfg) {
 export const SPRITES = Object.fromEntries(
   Object.entries(CONFIG_ROL).map(([rol, cfg]) => [rol, _construirEstadosRol(cfg)]),
 );
+
+// ---------------------------------------------------------------------------
+// Sustitución por PNG real (D14: "sprites dibujados en código... sustituibles
+// por PNG"; Josem trajo el arte en pantalla/sprites/<rol>/<estado>_<0|1>.png,
+// mismo contrato exacto -- 7 roles, 5 estados, 2 fotogramas, 24×32 -- que ya
+// usa `SPRITES` arriba, confirmado contra su propio manifest.json).
+//
+// Sustituye cada fotograma EN SITIO, uno a uno según va cargando: `SPRITES`
+// sigue siendo el mismo objeto (no se reasigna la constante), así que
+// escena.js no necesita saber que esto existe -- sigue leyendo
+// `SPRITES[rol][estado]` como siempre. Si un PNG concreto no carga (404,
+// red), ese hueco se queda con el fotograma procedural que ya había desde
+// la construcción de arriba: degradación silenciosa, nunca una pantalla
+// rota ni una promesa rechazada por un solo fallo (igual que el resto del
+// proyecto: ver `_resuelve_dentro`/`isinstance` en pantalla.py).
+// ---------------------------------------------------------------------------
+
+const ESTADOS_PERSONAJE = ["esperando", "leyendo", "escribiendo", "bloqueado", "terminado"];
+
+function _cargarImagen(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`no se pudo cargar ${url}`));
+    img.src = url;
+  });
+}
+
+/**
+ * cargarSpritesPersonajes(baseUrl) — lanza la carga de los 70 PNG y
+ * sustituye cada fotograma de `SPRITES` por el que vaya llegando. Devuelve
+ * una promesa que se resuelve cuando se ha INTENTADO cargar los 70 (éxito o
+ * fallo individual); nunca se rechaza entera por un solo PNG que falte.
+ */
+export function cargarSpritesPersonajes(baseUrl = "/static/sprites/") {
+  const tareas = [];
+  for (const rol of Object.keys(SPRITES)) {
+    for (const estado of ESTADOS_PERSONAJE) {
+      const frames = SPRITES[rol][estado];
+      if (!frames) continue;
+      frames.forEach((_fotogramaProcedural, i) => {
+        const url = `${baseUrl}${rol}/${estado}_${i}.png`;
+        tareas.push(
+          _cargarImagen(url)
+            .then((img) => {
+              frames[i] = img;
+            })
+            .catch(() => {}), // se queda el fotograma procedural ya puesto
+        );
+      });
+    }
+  }
+  return Promise.all(tareas);
+}
 
 // ---------------------------------------------------------------------------
 // Fondo: cubierta de un barco de noche (§5.3). `cielo` + `cubierta` suman

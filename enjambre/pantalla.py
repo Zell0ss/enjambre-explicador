@@ -32,10 +32,15 @@ _RUTA_FICHERO = re.compile(r"^/api/fichero/([^/]+)/([^/]+)/(.+)$")
 _RUTA_EVENTOS = re.compile(r"^/api/eventos/([^/]+)/([^/]+)\.jsonl$")
 _RUTA_DIRECTO = re.compile(r"^/api/directo/([^/]+)/([^/]+)$")
 _RUTA_STATIC = re.compile(r"^/static/(.+)$")
-# Nombres simples para /static: sin barras, así que por construcción ya
-# bloquea "../secreto.txt" (contiene "/"). No bloquea ".." a solas (son solo
-# puntos, caracter permitido) -- de eso se encarga _resuelve_dentro debajo.
-_NOMBRE_STATIC = re.compile(r"^[A-Za-z0-9._-]+$")
+# Lista blanca de caracteres para /static -- NO es la barrera de seguridad
+# (esa es siempre `_resuelve_dentro`, que resuelve y comprueba
+# `is_relative_to` igual que para /api/fichero; un ".." aquí dentro se deja
+# pasar el carácter y luego se resuelve y se rechaza igual que siempre).
+# Esto es solo para rechazar pronto basura evidente (bytes raros, espacios).
+# Permite "/" desde que `pantalla/sprites/` trajo subcarpetas por rol
+# (D14, arte real sustituyendo los sprites procedurales) -- antes solo
+# servía ficheros sueltos en la raíz de `pantalla/`.
+_NOMBRE_STATIC = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
 def _resuelve_dentro(base: Path, ruta_relativa: str) -> Path | None:

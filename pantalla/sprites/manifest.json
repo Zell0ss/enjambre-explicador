@@ -1,0 +1,200 @@
+{
+  "pixel_size": [
+    24,
+    32
+  ],
+  "ms_por_fotograma": 450,
+  "states": [
+    "esperando",
+    "leyendo",
+    "escribiendo",
+    "bloqueado",
+    "terminado"
+  ],
+  "frames_per_state": 2,
+  "style": "Monkey Island SCUMM / VGA, contorno negro, cabeza grande",
+  "roles": {
+    "cartografo": {
+      "label": "Cartógrafo",
+      "herramienta": "catalejo",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "despiezador": {
+      "label": "Despiezador",
+      "herramienta": "cuchillo",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "lector-de-pieza": {
+      "label": "Lector de pieza",
+      "herramienta": "vela",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "trazador": {
+      "label": "Trazador",
+      "herramienta": "compas",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "redactor": {
+      "label": "Redactor",
+      "herramienta": "pluma",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "verificador": {
+      "label": "Verificador",
+      "herramienta": "lupa",
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    },
+    "novato": {
+      "label": "Novato",
+      "herramienta": null,
+      "files": {
+        "esperando": [
+          "esperando_0.png",
+          "esperando_1.png"
+        ],
+        "leyendo": [
+          "leyendo_0.png",
+          "leyendo_1.png"
+        ],
+        "escribiendo": [
+          "escribiendo_0.png",
+          "escribiendo_1.png"
+        ],
+        "bloqueado": [
+          "bloqueado_0.png",
+          "bloqueado_1.png"
+        ],
+        "terminado": [
+          "terminado_0.png",
+          "terminado_1.png"
+        ]
+      }
+    }
+  }
+}

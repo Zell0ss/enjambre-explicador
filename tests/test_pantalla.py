@@ -16,6 +16,9 @@ def srv(tmp_path):
     run = salidas / "agora" / "r1"
     run.mkdir(parents=True); est.mkdir()
     (est / "index.html").write_text("<h1>hola</h1>")
+    sprites_dir = est / "sprites" / "cartografo"
+    sprites_dir.mkdir(parents=True)
+    (sprites_dir / "esperando_0.png").write_text("PNGFAKE")  # contenido ASCII: basta con probar la ruta
     (run / "mapa.md").write_text("# Mapa")
     (run / "eventos.jsonl").write_text('{"t":"2026-10-03T00:00:00.000","run":"r1","tipo":"run_inicio"}\n')
     (tmp_path / "secreto.txt").write_text("NO")
@@ -43,11 +46,23 @@ def test_eventos_y_fichero(srv):
     assert get(base + "/api/fichero/agora/r1/mapa.md")[1] == "# Mapa"
 
 
+def test_static_sirve_subcarpetas(srv):
+    """D14: el arte real de `pantalla/sprites/<rol>/<estado>_<frame>.png`
+    vive en subcarpetas -- _NOMBRE_STATIC tiene que dejar pasar la barra (la
+    barrera de verdad sigue siendo `_resuelve_dentro`, probado en el
+    siguiente test con exactamente esta misma subcarpeta)."""
+    base, _ = srv
+    status, cuerpo = get(base + "/static/sprites/cartografo/esperando_0.png")
+    assert status == 200
+    assert cuerpo == "PNGFAKE"
+
+
 @pytest.mark.parametrize("ruta", [
     "/api/fichero/agora/r1/../../../secreto.txt",
     "/api/fichero/agora/r1/%2e%2e/%2e%2e/%2e%2e/secreto.txt",
     "/api/fichero/agora/r1/%2E%2E%2F%2E%2E%2F%2E%2E%2Fsecreto.txt",
     "/static/../secreto.txt",
+    "/static/sprites/../../secreto.txt",
     "/api/eventos/../../secreto.txt",
 ])
 def test_traversal_es_404(srv, ruta):

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Sprites taller · Monkey Island</title>
+<style>
+  body { margin: 0; background: #1c1624; color: #f4e4c4; font: 14px/1.4 "Palatino Linotype", Palatino, serif; }
+  header { padding: 18px 22px 6px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .04em; }
+  p { margin: 0; color: #cbb892; }
+  section { padding: 8px 22px 18px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  h2 span { margin-left: 10px; color: #a89474; font-weight: normal; font-size: 13px; }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; }
+  .state { background: #2a2236; padding: 8px; border: 1px solid #4a3c28; }
+  .name { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #cbb892; margin-bottom: 6px; }
+  .anim { width: 96px; height: 128px; image-rendering: pixelated;
+           background-repeat: no-repeat; background-size: 208px 704px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Taller de piezas · 7 roles</h1>
+  <p>24×32 px · 5 estados · 2 fotogramas · ciclo 450 ms · estilo SCUMM / Monkey Island</p>
+</header>
+<section><h2>Cartógrafo<span>catalejo</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="cartografo" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="cartografo" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="cartografo" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="cartografo" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="cartografo" data-state="terminado"></div></div></div></section>
+<section><h2>Despiezador<span>cuchillo</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="despiezador" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="despiezador" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="despiezador" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="despiezador" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="despiezador" data-state="terminado"></div></div></div></section>
+<section><h2>Lector de pieza<span>vela</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="lector-de-pieza" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="lector-de-pieza" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="lector-de-pieza" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="lector-de-pieza" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="lector-de-pieza" data-state="terminado"></div></div></div></section>
+<section><h2>Trazador<span>compas</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="trazador" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="trazador" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="trazador" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="trazador" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="trazador" data-state="terminado"></div></div></div></section>
+<section><h2>Redactor<span>pluma</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="redactor" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="redactor" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="redactor" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="redactor" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="redactor" data-state="terminado"></div></div></div></section>
+<section><h2>Verificador<span>lupa</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="verificador" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="verificador" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="verificador" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="verificador" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="verificador" data-state="terminado"></div></div></div></section>
+<section><h2>Novato<span>sin herramienta</span></h2>
+            <div class="row"><div class="state"><div class="name">esperando</div>
+                <div class="anim" data-role="novato" data-state="esperando"></div></div><div class="state"><div class="name">leyendo</div>
+                <div class="anim" data-role="novato" data-state="leyendo"></div></div><div class="state"><div class="name">escribiendo</div>
+                <div class="anim" data-role="novato" data-state="escribiendo"></div></div><div class="state"><div class="name">bloqueado</div>
+                <div class="anim" data-role="novato" data-state="bloqueado"></div></div><div class="state"><div class="name">terminado</div>
+                <div class="anim" data-role="novato" data-state="terminado"></div></div></div></section>
+<script>
+const STATES = ["esperando", "leyendo", "escribiendo", "bloqueado", "terminado"];
+const frame = {};
+function tick() {
+  document.querySelectorAll(".anim").forEach(el => {
+    const role = el.dataset.role;
+    const state = el.dataset.state;
+    const key = role + ":" + state;
+    frame[key] = (frame[key] || 0) ^ 1;
+    const si = STATES.indexOf(state);
+    el.style.backgroundImage = `url("${role}/sheet_x4.png")`;
+    el.style.backgroundPosition = `-${frame[key] * 112}px -${si * 144}px`;
+  });
+}
+tick();
+setInterval(tick, 450);
+</script>
+</body>
+</html>

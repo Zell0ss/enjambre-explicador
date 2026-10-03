@@ -31,6 +31,7 @@ import {
   dibujar,
   dibujarTexto,
   medirTexto,
+  cargarSpritesPersonajes,
 } from "./sprites.js";
 
 // ---------------------------------------------------------------------------
@@ -56,11 +57,18 @@ let _bocadillosDibujados = []; // {x1,y1,x2,y2}
 // Elementos de cabecera, rellenados una vez en `arrancar`.
 let _cab = null;
 
-export function arrancar(lienzo, cabecera) {
+export async function arrancar(lienzo, cabecera) {
   _ctx = lienzo.getContext("2d");
   _ctx.imageSmoothingEnabled = false; // pixel art: nunca interpolar al escalar (pedido de Josem)
   _escalarLienzo(lienzo);
   window.addEventListener("resize", () => _escalarLienzo(lienzo));
+
+  // Arranca la carga de los PNG reales de personajes ya mismo, en paralelo
+  // con el resto del arranque (fetch de /api/runs, construir la cabecera...)
+  // -- solo se espera justo antes de empezar a pintar agentes de verdad
+  // (`_arrancarRepeticion`), para que el primer fotograma ya salga con el
+  // arte real y no con un parpadeo del procedural de respaldo.
+  const cargaSprites = cargarSpritesPersonajes();
 
   _cab = _construirCabecera(cabecera);
   _actualizarCabecera();
@@ -106,6 +114,7 @@ export function arrancar(lienzo, cabecera) {
     return;
   }
 
+  await cargaSprites;
   _arrancarRepeticion(_repo, _run);
 }
 
