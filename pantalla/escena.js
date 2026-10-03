@@ -460,7 +460,25 @@ async function _arrancarRepeticion(repo, run) {
   function _aplicarHasta(k) {
     _estado = eventos.slice(0, k).reduce(aplicar, inicial());
     _actualizarCabecera();
-    pintar(_ctx, _estado, t0 + tVirtual);
+    // `ahoraMs` para `pintar` tiene que estar en la misma base que los
+    // timestamps `t` de los eventos (reales, sin comprimir): `bocadillo.t`
+    // y `loro.t` (T11) son timestamps reales tal cual vienen del evento, y
+    // su edad se mide como `ahoraMs - Date.parse(ese.t)`. `t0 + tVirtual`
+    // está en la base COMPRIMIDA (huecos >5s cuentan como 1s, para que la
+    // repetición no sea aburrida -- ver más abajo, vTimes) -- mezclar las
+    // dos bases en esa resta hace que, pasados los primeros huecos largos,
+    // `ahoraMs` quede muy por debajo del timestamp real del evento recién
+    // aplicado: la edad sale negativa, falla `edadMs >= 0` y el bocadillo o
+    // el loro nunca se pintan. Encontrado contra un run real con huecos de
+    // verdad (un `--falso` no lo manifiesta: sus eventos están casi
+    // pegados en el tiempo y la compresión apenas actúa).
+    // El *ritmo* de reproducción (qué `k` toca en cada frame) se sigue
+    // decidiendo con `tVirtual`/`vTimes`, sin tocar eso: solo cambia qué
+    // instante se le pasa a `pintar`, para que quede en la misma base que
+    // usará el modo directo (T12), que llamará a `pintar` vía `alimentar`
+    // con un reloj real (`Date.now()`-like), no comprimido.
+    const ahoraMs = k > 0 ? Date.parse(eventos[k - 1].t) : t0;
+    pintar(_ctx, _estado, ahoraMs);
     if (barra) barra.value = String(k);
   }
 
