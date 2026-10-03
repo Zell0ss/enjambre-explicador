@@ -94,7 +94,7 @@ _ESTADO_POR_TOOL = {
 _MAX_RESPUESTA = 500
 
 
-def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
+def hacer_hook(agente: Agente, instancia: str, ctx: Contexto, denegados: set[str] | None = None):
     """Fabrica el callback `PreToolUse` de este lanzamiento (D8).
 
     Cierra sobre `agente`/`instancia`/`ctx` porque la firma que exige el SDK
@@ -106,7 +106,20 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
     puede rechazarla después (p.ej. `Write` sobre un fichero no leído en la
     sesión). Ese evento ahora sale de `Traductor`, a partir del resultado
     real de la tool (`ToolResultBlock`), más abajo en este módulo.
+
+    `denegados`: conjunto compartido con el `Traductor` de este mismo
+    lanzamiento (`lanzar()` crea uno por lanzamiento y lo pasa a los dos).
+    Cuando este hook deniega una tool, apunta aquí su `tool_use_id` para que
+    `Traductor` sepa que ese id ya se reportó vía `denegado` y no emita
+    también un `aviso` de "escritura rechazada" si la CLI, tras la
+    denegación, todavía entrega un `ToolResultBlock` con `is_error=True` para
+    el mismo id -- dos alertas en pantalla por el mismo hecho. Default `None`
+    en vez de `set()` para no compartir un set mutable entre llamadas que se
+    olviden de pasarlo explícitamente; si no se pasa, simplemente no hay
+    nada que compartir con ningún `Traductor`.
     """
+    if denegados is None:
+        denegados = set()
 
     async def hook(entrada: dict[str, Any], tool_use_id: str | None, contexto: dict) -> dict:
         # Este hook es el único sitio donde el guardia (D8) se conecta al
@@ -139,10 +152,21 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
             tool_name = entrada.get("tool_name", "?") if isinstance(entrada, dict) else "?"
             ok, motivo = False, f"error interno del hook: {type(e).__name__}: {e}"
             ruta = None
+            # Sin esto, si el fallo ocurrió antes de calcular `patron` más
+            # arriba, el `ruta or patron or ""` de abajo sería un NameError
+            # dentro de la rama que precisamente tiene que fallar cerrado sin
+            # reventar.
+            patron = None
 
         if not ok:
+            if tool_use_id is not None:
+                denegados.add(tool_use_id)
             ctx.eventos.emitir(
-                "denegado", instancia, herramienta=tool_name, detalle=ruta or "", motivo=motivo
+                # `ruta_de` no cubre Glob (solo tiene `pattern`, no
+                # `path`/`file_path`): sin caer a `patron`, un Glob denegado
+                # siempre mostraba `detalle=""` en pantalla aunque el patrón
+                # que se intentó ya se había extraído arriba.
+                "denegado", instancia, herramienta=tool_name, detalle=ruta or patron or "", motivo=motivo
             )
             return {
                 "hookSpecificOutput": {
@@ -219,7 +243,13 @@ class Traductor:
     """Convierte los mensajes del SDK de un lanzamiento en eventos (vía
     `ctx.eventos`) y en un `Resultado` acumulado (D11)."""
 
-    def __init__(self, instancia: str, ctx: Contexto, agente: Agente | None = None):
+    def __init__(
+        self,
+        instancia: str,
+        ctx: Contexto,
+        agente: Agente | None = None,
+        denegados: set[str] | None = None,
+    ):
         self._instancia = instancia
         self._ctx = ctx
         # `agente` es opcional (default None) solo para no romper las pruebas
@@ -228,6 +258,13 @@ class Traductor:
         # inesperadas en el mensaje `init`) -- sin agente no hay con qué
         # comparar, así que esa comprobación simplemente no hace nada.
         self._agente = agente
+        # Conjunto compartido con el hook (`hacer_hook`) de este mismo
+        # lanzamiento: ids de `tool_use_id` que el guardia ya denegó (y ya
+        # reportó vía `denegado`). `None` para las pruebas que construyen un
+        # `Traductor` suelto sin hook -- sin conjunto compartido, ningún id
+        # puede estar "ya denegado", así que el comportamiento de D17 sigue
+        # exactamente igual que antes de este arreglo.
+        self._denegados = denegados
         self._estado_actual: str | None = None
         self._modelo_real: str | None = None
         self._respuesta = ""
@@ -295,6 +332,16 @@ class Traductor:
                     if ruta is None:
                         continue  # no era un Write/Edit que estuviéramos siguiendo
                     if bloque.is_error:
+                        if self._denegados is not None and bloque.tool_use_id in self._denegados:
+                            # El hook ya reportó esta misma llamada como
+                            # `denegado`; si la CLI, tras la denegación,
+                            # todavía entrega este `ToolResultBlock` de
+                            # error, no emitir también un `aviso` -- sería
+                            # la misma alerta dos veces en pantalla. Se quita
+                            # del conjunto para no dejarlo creciendo sin
+                            # límite dentro de esta misma sesión de `lanzar`.
+                            self._denegados.discard(bloque.tool_use_id)
+                            continue
                         error = _texto_de_resultado(bloque.content)[:200]
                         self._ctx.eventos.emitir(
                             "aviso",
@@ -415,8 +462,13 @@ async def lanzar(agente: Agente, instancia: str, encargo: str, ctx: Contexto) ->
     a `lanzar` -- `estado`/`herramienta`/`denegado`/`fichero`/`aviso` -- nunca
     `lanzado`/`respuesta`/`fin_agente`, que son responsabilidad del guion
     (D5, ver `orquestar.py`)."""
-    traductor = Traductor(instancia, ctx, agente)
-    hook = hacer_hook(agente, instancia, ctx)
+    # Compartido entre el hook y el `Traductor` de este lanzamiento (D17 +
+    # arreglo de la doble alerta): se crea una vez aquí, uno por lanzamiento
+    # -- nunca como default mutable de `hacer_hook`/`Traductor`, que viviría
+    # entre llamadas distintas.
+    denegados: set[str] = set()
+    traductor = Traductor(instancia, ctx, agente, denegados)
+    hook = hacer_hook(agente, instancia, ctx, denegados)
     opts = opciones(agente, ctx, hook)
 
     async for mensaje in query(prompt=encargo, options=opts):

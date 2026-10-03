@@ -86,6 +86,29 @@ def test_hook_permite_escritura_y_no_emite_fichero(tmp_path):
     assert not [e for e in leer(c) if e["tipo"] == "fichero"]
 
 
+def test_hook_deniega_glob_detalle_usa_patron(tmp_path):
+    # `ruta_de` no cubre Glob (solo tiene `pattern`, no `path`/`file_path`):
+    # sin caer a `patron`, un Glob denegado mostraba siempre detalle="" en
+    # pantalla aunque el patrón que se intentó ya se había extraído.
+    c = ctx(tmp_path)
+    hook = hacer_hook(cargar("cartografo"), "cartografo", c)
+    entrada = {"hook_event_name": "PreToolUse", "tool_name": "Glob",
+               "tool_input": {"pattern": "../etc/*"}, "tool_use_id": "1"}
+    asyncio.run(hook(entrada, "1", {"signal": None}))
+    [d] = [e for e in leer(c) if e["tipo"] == "denegado"]
+    assert d["detalle"] == "../etc/*"
+
+
+def test_hook_denegado_anade_tool_use_id_a_denegados(tmp_path):
+    c = ctx(tmp_path)
+    denegados: set[str] = set()
+    hook = hacer_hook(cargar("novato"), "novato", c, denegados)
+    entrada = {"hook_event_name": "PreToolUse", "tool_name": "Read",
+               "tool_input": {"file_path": str(c.salida / "fichas" / "x.md")}, "tool_use_id": "7"}
+    asyncio.run(hook(entrada, "7", {"signal": None}))
+    assert "7" in denegados
+
+
 def test_hook_excepcion_interna_deniega_no_aprueba_ni_explota(tmp_path):
     # Entrada malformada (sin "tool_name"): fuerza una excepción DENTRO del
     # cuerpo del hook, no una denegación normal de `permitido()`. Bajo
@@ -168,6 +191,27 @@ def test_traductor_emite_aviso_si_la_escritura_se_rechaza(tmp_path):
     [a] = [e for e in evs if e["tipo"] == "aviso"]
     assert a["texto"].startswith("escritura rechazada: dudas.md: ")
     assert len(a["texto"]) < len("escritura rechazada: dudas.md: ") + 201
+
+
+def test_traductor_no_duplica_aviso_si_el_hook_ya_denego(tmp_path):
+    # El hook ya reportó este tool_use_id como `denegado`; si la CLI, tras
+    # denegarlo, todavía entrega su ToolResultBlock de error, Traductor no
+    # debe emitir TAMBIÉN un `aviso` de "escritura rechazada" -- sería la
+    # misma alerta dos veces en pantalla por el mismo hecho.
+    c = ctx(tmp_path)
+    denegados = {"t9"}
+    t = Traductor("novato", c, denegados=denegados)
+    ruta_absoluta = str(c.salida / "dudas.md")
+    t.procesar(am([ToolUseBlock("t9", "Write", {"file_path": ruta_absoluta, "content": "x"})]))
+    t.procesar(
+        UserMessage(
+            content=[ToolResultBlock(tool_use_id="t9", content="denegado por el guardia", is_error=True)]
+        )
+    )
+    evs = leer(c)
+    assert not [e for e in evs if e["tipo"] == "aviso"]
+    assert not [e for e in evs if e["tipo"] == "fichero"]
+    assert "t9" not in denegados  # se quita para no crecer sin límite
 
 
 # --- Regex de "bloqueado": insensible a mayúsculas, no se cuela en negaciones -
