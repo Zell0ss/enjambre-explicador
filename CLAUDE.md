@@ -125,10 +125,19 @@ cada lanzamiento del novato, para que `Write` lo vea como fichero nuevo.
      procesando este `UserMessage`, no del hook.
    - El mensaje `system`/`init` no tiene un caso propio en el parser: cae en
      el `case _: return SystemMessage(subtype=subtype, data=data)` genérico
-     (`_internal/message_parser.py:298-302`). Su forma exacta -- incluida la
-     lista `tools` dentro de `data` -- la decide la CLI, no el SDK Python, así
-     que `Traductor` la lee defensivamente (`data.get("tools") or []`) en vez
-     de asumir que la clave siempre está.
+     (`_internal/message_parser.py:298-302`). Su forma la decide la CLI, no
+     el SDK Python -- pero **la clave `tools` está CONFIRMADA**, leyendo el
+     binario bundled (`_bundled/claude`, minificado; localizable con
+     `grep -a 'subtype:x("init")'`): el esquema zod del mensaje es
+     `u({type:x("system"),subtype:x("init"),...,tools:A(o()),
+     mcp_servers:A(u({...})),model:o(),...})` -- `tools` es un array de
+     strings (`A(o())`) y, a diferencia de `betas`/`startup_timing`/otros
+     campos del mismo esquema, **no lleva `.optional()`**: es requerido por
+     la CLI instalada. `Traductor` lo sigue leyendo con
+     `isinstance(data.get("tools"), list)` en vez de indexar directo, y avisa
+     (`"init sin lista tools: comprobación D18/I4 no aplicada"`) si alguna
+     vez no lo es -- no para cubrir una duda sobre el nombre de la clave
+     (ya resuelta), sino por si una CLI futura cambia el contrato.
 
 **Smoke test real (Paso 2, novato/Haiku) contra una copia de
 `tests/fixtures/agora_test/`:** por el mismo motivo (el fixture ya trae un
