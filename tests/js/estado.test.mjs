@@ -60,3 +60,45 @@ test("tipo desconocido no añade línea a la bitácora", () => {
   const b = aplicar(a, ev("tipo_del_futuro", { agente: "x", raro: 1 }));
   assert.equal(b.bitacora.length, bitacoraAntes);
 });
+
+// --- Cambio 1: bocadillos con rutas relativas, nunca absolutas (pedido por
+// Josem tras revisión visual -- el texto absoluto se corta a medias en la
+// barra de la pantalla).
+test("bocadillo de herramienta relativiza una ruta bajo salida", () => {
+  const s = corre(
+    ev("run_inicio", { repo: "/data/agora", salida: "/data/enjambre-explicador/salidas/agora/r1" }),
+    ev("herramienta", { agente: "novato", herramienta: "Write", detalle: "/data/enjambre-explicador/salidas/agora/r1/fichas/datos.md" }),
+  );
+  assert.equal(s.agentes.novato.bocadillo.texto, "Write fichas/datos.md");
+});
+
+test("bocadillo de estado relativiza una ruta bajo repo", () => {
+  const s = corre(
+    ev("run_inicio", { repo: "/data/agora", salida: "/data/enjambre-explicador/salidas/agora/r1" }),
+    ev("estado", { agente: "novato", estado: "leyendo", detalle: "/data/agora/backend/services/llm.py" }),
+  );
+  assert.equal(s.agentes.novato.bocadillo.texto, "backend/services/llm.py");
+});
+
+test("una ruta que no empieza por repo ni salida se deja tal cual", () => {
+  const s = corre(
+    ev("run_inicio", { repo: "/data/agora", salida: "/data/enjambre-explicador/salidas/agora/r1" }),
+    ev("herramienta", { agente: "novato", herramienta: "Glob", detalle: "**/*.py" }),
+  );
+  assert.equal(s.agentes.novato.bocadillo.texto, "Glob **/*.py");
+});
+
+// --- Cambio 2: la línea de bitácora de fin_agente no repite el nombre del
+// agente (addBitacora ya lo antepone); muestra estado final, duración y coste.
+test("fin_agente no repite el nombre del agente y muestra estado/duración/coste", () => {
+  const s = corre(
+    ev("run_inicio"),
+    ev("fin_agente", { agente: "novato", estado_final: "terminado", duracion_s: 30, coste_usd: 0.02 }),
+  );
+  const ultima = s.bitacora[s.bitacora.length - 1];
+  const apariciones = ultima.split("novato").length - 1;
+  assert.equal(apariciones, 1);
+  assert.match(ultima, /terminado/);
+  assert.match(ultima, /30/);
+  assert.match(ultima, /0\.02/);
+});
