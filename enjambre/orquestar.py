@@ -110,22 +110,18 @@ async def _paso(
     )
     try:
         resultado = await asyncio.wait_for(lanzar(agente, instancia, encargo, ctx), timeout=timeout_s)
-    except TimeoutError:
-        # Diagnóstico: sin esto, un timeout del SDK real (Tarea 7) solo deja
-        # "estado_final: timeout" en el jsonl, sin rastro de qué tardó tanto.
-        # Mensaje ya formateado (f-string), no %s/%r: el logger de LogCentral
-        # es loguru, que interpola con `{}` (y solo si se le pasan args
-        # aparte), no con el %-estilo de `logging` -- pasar `instancia` como
-        # arg posicional aquí se quedaría sin sustituir en el JSON de salida.
-        obtener_log().exception(f"lanzar {instancia}: timeout tras {timeout_s}s")
+    except TimeoutError as e:
+        # §6: un fallo de `lanzar` es un evento de AGENTE, no una excepción
+        # no prevista del propio orquestador -- va al jsonl (`aviso`), no a
+        # LogCentral. Sin esto, "estado_final: timeout" no deja ningún rastro
+        # de qué tardó tanto.
+        ctx.eventos.emitir("aviso", instancia, texto=f"{type(e).__name__}: {e}")
         resultado = Resultado("timeout")
-    except Exception:
-        # Idem: sin registrar aquí, un error de autenticación/rate-limit/red
-        # del SDK real se convierte en un "error" opaco, sin tipo ni mensaje,
-        # ni en el jsonl (que solo guarda estado_final) ni en ningún otro
-        # sitio -- indepurable en producción aunque sea inofensivo con el
-        # `lanzar` falso de esta tarea.
-        obtener_log().exception(f"lanzar {instancia}: excepción")
+    except Exception as e:
+        # Idem: sin el `aviso`, un error de autenticación/rate-limit/red del
+        # SDK real (Tarea 7) se convierte en un "error" opaco, sin tipo ni
+        # mensaje, en vez de quedar documentado en el propio jsonl del run.
+        ctx.eventos.emitir("aviso", instancia, texto=f"{type(e).__name__}: {e}")
         resultado = Resultado("error")
 
     coste.total += resultado.coste_usd

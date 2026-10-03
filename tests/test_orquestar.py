@@ -169,18 +169,13 @@ async def test_tope_de_coste_no_cuenta_una_vuelta_que_nunca_se_lanzo(repo, tmp_p
     assert [e["n"] for e in evs if e["tipo"] == "vuelta"] == [1]
 
 
-async def test_excepcion_en_lanzar_se_registra_en_el_log(repo, tmp_path, monkeypatch):
+async def test_excepcion_en_lanzar_emite_aviso(repo, tmp_path):
     """La excepción de un `lanzar` inyectado (aquí, de pega; en producción,
     cualquier fallo del SDK real -- auth, rate limit, red) no debe desaparecer
-    sin rastro al convertirse en Resultado('error'): tiene que pasar por
-    `obtener_log().exception(...)` antes."""
-    llamadas = []
-
-    class _LogFalso:
-        def exception(self, *args, **kwargs):
-            llamadas.append((args, kwargs))
-
-    monkeypatch.setattr("enjambre.orquestar.obtener_log", lambda: _LogFalso())
+    sin rastro al convertirse en Resultado('error'): es un evento de AGENTE
+    (§6: va al jsonl, no a LogCentral -- eso es solo para excepciones no
+    previstas del propio orquestador), así que tiene que quedar como `aviso`
+    con el tipo y el mensaje de la excepción."""
 
     def revienta(*a):
         raise RuntimeError("boom")
@@ -189,4 +184,8 @@ async def test_excepcion_en_lanzar_se_registra_en_el_log(repo, tmp_path, monkeyp
         repo, tmp_path / "s", hacer_lanzar_falso({"lector-de-pieza:a-uno": [revienta]}), run="r1"
     )
     assert fin["motivo"] == "fallo:lector-de-pieza:a-uno:error"
-    assert llamadas, "obtener_log().exception(...) no se llamó al convertir la excepción en Resultado('error')"
+
+    avisos = [e for e in eventos(tmp_path / "s") if e["tipo"] == "aviso"]
+    assert len(avisos) == 1
+    assert avisos[0]["agente"] == "lector-de-pieza:a-uno"
+    assert avisos[0]["texto"] == "RuntimeError: boom"
