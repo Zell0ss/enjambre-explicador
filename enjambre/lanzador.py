@@ -42,9 +42,18 @@ gobierna cada decisión:
 - El mensaje `system`/`init` cae en el caso genérico `SystemMessage(subtype,
   data)` del parser (`_internal/message_parser.py`, línea ~299: `case _:
   return SystemMessage(...)`) -- la CLI no lo lista en los subtypes
-  especiales que el parser reconoce por nombre, así que su forma exacta
-  (incluida la lista `tools` dentro de `data`) viene de la CLI, no del SDK
-  Python; se lee defensivamente (`data.get("tools") or []`).
+  especiales que el parser reconoce por nombre, así que su forma la define
+  la CLI, no el SDK Python. CONFIRMADO leyendo el binario bundled
+  (`_bundled/claude`, minificado; `grep -a 'subtype:x("init")'` localiza el
+  esquema zod del mensaje): `u({type:x("system"),subtype:x("init"),...
+  tools:A(o()),...})` -- `tools` es un array de strings (`A(o())`) y, a
+  diferencia de otros campos del mismo esquema (`betas`, `startup_timing`,
+  ...), NO lleva `.optional()`: es un campo requerido por contrato de la CLI
+  actual. Aun así se lee defensivamente (`isinstance(..., list)`, no
+  `data["tools"]`), por si una CLI futura lo renombra o lo vuelve opcional --
+  en ese caso `Traductor` avisa de que la comprobación no se pudo hacer, en
+  vez de tratar la ausencia como "cero tools" (ver D18/I4 en el cuerpo del
+  módulo).
 
 Parche D16-D18 (2026-10-03): ver `CLAUDE.md` -> "Verificado del SDK" para el
 resto del detalle de estas tres citas.
@@ -302,16 +311,29 @@ class Traductor:
             # herramientas disponibles para esta sesión -- no solo lo que se
             # pidió. Relacionado con D18/I4: si aquí aparecieran tools MCP de
             # plugins/conectores, sería la prueba de que `strict_mcp_config`
-            # no bastó.
+            # no bastó. La clave `tools` del mensaje `init` es un array de
+            # strings REQUERIDO por el esquema zod de la CLI (`tools:A(o())`,
+            # sin `.optional()` -- ver cabecera del módulo), así que ausente
+            # o con otra forma es una CLI que cambió el contrato, no "cero
+            # tools": tratarlo como lista vacía escondería justo el caso que
+            # esta comprobación existe para pescar, así que avisa en vez de
+            # callar.
             if mensaje.subtype == "init" and self._agente is not None:
-                tools_init = mensaje.data.get("tools") or []
-                extra = [t for t in tools_init if t not in self._agente.tools]
-                if extra:
+                tools_init = mensaje.data.get("tools")
+                if not isinstance(tools_init, list):
                     self._ctx.eventos.emitir(
                         "aviso",
                         self._instancia,
-                        texto=f"init trae tools no pedidas: {', '.join(extra)}",
+                        texto="init sin lista tools: comprobación D18/I4 no aplicada",
                     )
+                else:
+                    extra = [t for t in tools_init if t not in self._agente.tools]
+                    if extra:
+                        self._ctx.eventos.emitir(
+                            "aviso",
+                            self._instancia,
+                            texto=f"init trae tools no pedidas: {', '.join(extra)}",
+                        )
             return
 
         if isinstance(mensaje, ResultMessage):
@@ -334,7 +356,20 @@ class Traductor:
         # arquitecto no la pidió), pero sí "no bloqueado" y "no estoy
         # bloqueado". `bloquead[oa]` cubre también la forma femenina
         # ("bloqueada").
-        if re.search(r"(?<!no )(?<!no estoy )bloquead[oa]", self._respuesta, re.IGNORECASE):
+        #
+        # Regresión encontrada en revisión (re-parcheada aquí): la reescritura
+        # de arriba había perdido los `\b` originales. Sin ellos,
+        # "desbloqueado" (justo el sentido CONTRARIO: acceso concedido, no
+        # bloqueado) colaba un falso positivo -- "bloquead[oa]" es substring
+        # de "desbloqueado". Y en la otra dirección, sin `\b` DENTRO del
+        # lookbehind, "casino bloqueado" se denegaba por error: los 3
+        # caracteres que preceden a "bloqueado" ahí son "no " (de "casiNO "),
+        # aunque no sean la palabra "no" -- el lookbehind necesita su propio
+        # `\b` para exigir que esos caracteres formen la palabra suelta "no",
+        # no cualquier substring que termine igual. `\bbloquead[oa]\b` exige
+        # además un límite de palabra tras la raíz, para no colar "bloqueados"
+        # dentro de otra palabra mayor.
+        if re.search(r"(?<!\bno )(?<!\bno estoy )\bbloquead[oa]\b", self._respuesta, re.IGNORECASE):
             return "bloqueado"
         if r is not None and (r.is_error or r.subtype != "success"):
             return "error"
