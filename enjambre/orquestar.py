@@ -301,15 +301,21 @@ async def orquestar(
             r_nov = _resultado_o_fallo("novato", r_nov)
             _exige_terminado("novato", r_nov)
 
-            if n >= 2:
-                # D16: exigir que de verdad se hayan vuelto a escribir EN esta
-                # vuelta -- tras el borrado de arriba, si el agente no las
-                # reescribe (p.ej. porque su `Write` fue rechazada, o porque
-                # el guion de pruebas no las genera) el run debe parar con
-                # `falta:<fichero>`, nunca seguir leyendo en silencio lo que
-                # ya no está.
-                _exige(salida, "verificacion.md")
-                _exige(salida, "dudas.md")
+            # D16: exigir que de verdad se hayan escrito verificacion.md/
+            # dudas.md tras este lanzamiento -- en TODAS las vueltas, no solo
+            # desde la 2 (el borrado de arriba sigue siendo solo de vuelta
+            # >= 2: en la vuelta 1 no hay nada que borrar, los ficheros no
+            # existen todavía la primera vez). No hay motivo para que la
+            # vuelta 1 tolere un fichero que falta mientras las demás no: sin
+            # esta exigencia aquí, un verificador/novato que no escribe su
+            # fichero en la vuelta 1 deja `n_fallos`/`v` en `None` más abajo
+            # -- no cuenta como aprobado, así que el run sigue de largo,
+            # lanza al redactor en modo revisión y entra en una vuelta 2
+            # completa (coste real de más: redactor + verificador + novato)
+            # antes de que nada lo note, en vez de parar aquí mismo con
+            # `falta:<fichero>`.
+            _exige(salida, "verificacion.md")
+            _exige(salida, "dudas.md")
 
             # D13: copiar verificacion.md/dudas.md a vueltas/<n>/ antes de que
             # la vuelta siguiente los sobrescriba (en la fase 1 la vuelta 1 se

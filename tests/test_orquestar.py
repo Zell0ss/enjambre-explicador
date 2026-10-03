@@ -275,6 +275,31 @@ async def test_verificador_sin_verificacion_en_vuelta_2_para_el_run_con_falta_ve
     assert fin["motivo"] == "falta:verificacion.md"
 
 
+async def test_novato_sin_dudas_en_vuelta_1_para_el_run_con_falta_dudas(repo, tmp_path):
+    """Simetriza D16 a la vuelta 1: hasta ahora `_exige(salida, "verificacion.md")`
+    y `_exige(salida, "dudas.md")` solo corrían desde la vuelta 2, así que un
+    novato que no escribe `dudas.md` ya en la vuelta 1 no paraba el run ahí
+    mismo -- `n_fallos`/`v` salían `None`, no contaban como aprobado, y el
+    run seguía de largo: redactor en modo revisión + una vuelta 2 completa
+    (coste real de más) antes de que nada lo notara. Con la exigencia también
+    en vuelta 1, debe parar de inmediato con `falta:dudas.md`, sin llegar a
+    lanzar la revisión del redactor ni una segunda vuelta.
+
+    No se duplica el caso simétrico (`verificacion.md` sin escribir en vuelta
+    1): el mecanismo es el mismo `_exige` para los dos ficheros, y el test de
+    `verificacion.md` ya existente para la vuelta 2 (arriba) cubre que
+    `_exige` distingue bien cuál de los dos ficheros falta."""
+    lanzar = hacer_lanzar_falso({"novato": [_novato_sin_dudas]})
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin["motivo"] == "falta:dudas.md"
+    assert fin["vueltas"] == 1
+    evs = eventos(tmp_path / "s")
+    assert [e["n"] for e in evs if e["tipo"] == "vuelta"] == [1]
+    orden = lanzados(evs)
+    assert orden.count("verificador") == 1 and orden.count("novato") == 1
+    assert orden.count("redactor") == 1  # solo el borrador; nunca llega la revisión
+
+
 async def test_vuelta_1_no_se_ve_afectada_por_el_borrado_de_d16(repo, tmp_path):
     """D16 actúa solo desde la vuelta >= 2: en la vuelta 1 no hay nada que
     borrar (ni verificacion.md ni dudas.md existen todavía) y el run normal
