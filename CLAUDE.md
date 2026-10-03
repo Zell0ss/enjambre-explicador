@@ -107,6 +107,29 @@ pendiente de decisión del arquitecto. Arreglo más simple que no requiere
 tocar el muro: que `orquestar.py` borre/trunque `salida/dudas.md` antes de
 cada lanzamiento del novato, para que `Write` lo vea como fichero nuevo.
 
+5. **Parche D16-D18 (2026-10-03), tres hallazgos nuevos sobre el mismo SDK
+   instalado:**
+   - `strict_mcp_config` existe en `ClaudeAgentOptions` (`types.py:2018-2023`):
+     "When `True`, only use MCP servers passed via `mcp_servers`, ignoring
+     all other MCP configurations... Maps to the CLI's `--strict-mcp-config`
+     flag". Base de D18 -- hipótesis de los 836K tokens de entrada: tools MCP
+     de plugins/conectores ajenos al enjambre podrían viajar en cada turno
+     sin esto.
+   - El resultado real de un `Write`/`Edit` (si la tool lo aceptó o no, no si
+     el guardia lo permitió) llega como `ToolResultBlock` dentro de
+     `UserMessage.content`, NUNCA dentro de un `AssistantMessage`
+     (`_internal/message_parser.py`, case `"user"` -> `"tool_result"`, línea
+     ~124; el caso homónimo de la línea ~186 es para `AssistantMessage` y no
+     se usa aquí). Base de D17: el hook `PreToolUse` solo ve el permiso, no
+     el resultado, así que `fichero`/`aviso` tienen que salir de `Traductor`
+     procesando este `UserMessage`, no del hook.
+   - El mensaje `system`/`init` no tiene un caso propio en el parser: cae en
+     el `case _: return SystemMessage(subtype=subtype, data=data)` genérico
+     (`_internal/message_parser.py:298-302`). Su forma exacta -- incluida la
+     lista `tools` dentro de `data` -- la decide la CLI, no el SDK Python, así
+     que `Traductor` la lee defensivamente (`data.get("tools") or []`) en vez
+     de asumir que la clave siempre está.
+
 **Smoke test real (Paso 2, novato/Haiku) contra una copia de
 `tests/fixtures/agora_test/`:** por el mismo motivo (el fixture ya trae un
 `dudas.md` de una vuelta anterior), el novato leyó `articulo.md` con éxito
