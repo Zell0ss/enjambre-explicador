@@ -31,6 +31,23 @@ gobierna cada decisión:
   (`subprocess_cli.py::_build_command`), que sustituye el prompt de Claude
   Code; solo la forma `{"type": "preset", "append": ...}` añade en vez de
   sustituir.
+- `strict_mcp_config` existe como campo de `ClaudeAgentOptions` (`types.py`,
+  línea ~2018: "only use MCP servers passed via mcp_servers, ignoring all
+  other MCP configurations... Maps to the CLI's --strict-mcp-config flag") --
+  base del parche D18.
+- El resultado real de un `Write`/`Edit` (no si el guardia lo permitió) llega
+  como `ToolResultBlock` dentro de un `UserMessage.content`, nunca dentro de
+  un `AssistantMessage` (`_internal/message_parser.py`, case "user" ->
+  "tool_result", línea ~124) -- base del parche D17.
+- El mensaje `system`/`init` cae en el caso genérico `SystemMessage(subtype,
+  data)` del parser (`_internal/message_parser.py`, línea ~299: `case _:
+  return SystemMessage(...)`) -- la CLI no lo lista en los subtypes
+  especiales que el parser reconoce por nombre, así que su forma exacta
+  (incluida la lista `tools` dentro de `data`) viene de la CLI, no del SDK
+  Python; se lee defensivamente (`data.get("tools") or []`).
+
+Parche D16-D18 (2026-10-03): ver `CLAUDE.md` -> "Verificado del SDK" para el
+resto del detalle de estas tres citas.
 """
 
 import re
@@ -42,8 +59,11 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     HookMatcher,
     ResultMessage,
+    SystemMessage,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
     query,
 )
 
@@ -71,14 +91,20 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
     Cierra sobre `agente`/`instancia`/`ctx` porque la firma que exige el SDK
     (`HookCallback`) no tiene sitio para pasárselos de otro modo: la consulta
     solo nos da `tool_name`/`tool_input` del turno en curso.
+
+    D17: este hook ya NO emite `fichero` al permitir un Write/Edit -- que el
+    guardia permita una escritura no significa que ocurriera; la tool real
+    puede rechazarla después (p.ej. `Write` sobre un fichero no leído en la
+    sesión). Ese evento ahora sale de `Traductor`, a partir del resultado
+    real de la tool (`ToolResultBlock`), más abajo en este módulo.
     """
 
     async def hook(entrada: dict[str, Any], tool_use_id: str | None, contexto: dict) -> dict:
         # Este hook es el único sitio donde el guardia (D8) se conecta al
         # SDK real. `permitido()` ya falla cerrado por construcción (Tarea 3),
-        # pero el CÓDIGO ALREDEDOR de esa llamada (acceso a `entrada`,
-        # construcción de la ruta `fichero`, el propio `emitir`) no tenía esa
-        # garantía: bajo `permission_mode="bypassPermissions"` (ver
+        # pero el CÓDIGO ALREDEDOR de esa llamada (acceso a `entrada`, el
+        # propio `emitir`) no tenía esa garantía: bajo
+        # `permission_mode="bypassPermissions"` (ver
         # `opciones()`), una excepción sin capturar aquí no se traduce en una
         # denegación -- el SDK no tiene ninguna decisión que tomar, así que
         # el permiso por defecto de `bypassPermissions` (aprobar) es lo que
@@ -98,16 +124,6 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
             patron = tool_input.get("pattern") if tool_name == "Glob" else None
 
             ok, motivo = permitido(agente.rol, tool_name, ruta, ctx.repo, ctx.salida, patron=patron)
-
-            if ok and tool_name in ("Write", "Edit") and ruta is not None:
-                resuelta = Path(ruta)
-                if not resuelta.is_absolute():
-                    resuelta = ctx.salida / resuelta
-                ctx.eventos.emitir(
-                    "fichero",
-                    instancia,
-                    ruta=str(resuelta.resolve().relative_to(ctx.salida.resolve())),
-                )
         except Exception as e:
             # `entrada["tool_name"]` pudo ser precisamente lo que falló: no
             # asumir que existe al construir el evento/motivo de esta rama.
@@ -134,7 +150,14 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
 
 def opciones(agente: Agente, ctx: Contexto, hook) -> ClaudeAgentOptions:
     """Construye las `ClaudeAgentOptions` de un lanzamiento (ver cabecera del
-    módulo para la justificación de cada elección)."""
+    módulo para la justificación de cada elección).
+
+    D18: `strict_mcp_config=True` y sin `mcp_servers` -- hipótesis del gasto
+    anómalo de la prueba de humo (836K tokens de entrada en una pasada del
+    novato): sin esto, las tools de servidores MCP de plugins/conectores de
+    este entorno viajan en cada turno aunque ningún agente del enjambre las
+    use nunca (ninguna está en `agente.tools`).
+    """
     hooks = None
     if hook is not None:
         hooks = {"PreToolUse": [HookMatcher(matcher=None, hooks=[hook])]}
@@ -148,21 +171,63 @@ def opciones(agente: Agente, ctx: Contexto, hook) -> ClaudeAgentOptions:
         permission_mode="bypassPermissions",
         setting_sources=[],
         hooks=hooks,
+        strict_mcp_config=True,
     )
+
+
+def _ruta_relativa_a_salida(ruta: str, salida: Path) -> str | None:
+    """Resuelve `ruta` (absoluta o relativa a `salida`, el cwd del agente) y
+    la expresa relativa a `salida` -- misma normalización que hacía antes el
+    hook (D17) al emitir `fichero`. `None` si `ruta` no cae bajo `salida` o
+    es inválida (byte nulo, etc.): no debería ocurrir para un Write/Edit que
+    el guardia ya aprobó, pero `Traductor` no es quien decide el muro (D8),
+    así que no asume nada sobre `ruta`."""
+    try:
+        resuelta = Path(ruta)
+        if not resuelta.is_absolute():
+            resuelta = salida / resuelta
+        return str(resuelta.resolve().relative_to(salida.resolve()))
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _texto_de_resultado(content: object) -> str:
+    """Extrae el texto plano de un `ToolResultBlock.content`, que puede ser
+    una cadena o una lista de bloques `{"type": "text", "text": ...}` (forma
+    real de un error de `Write`/`Edit`, Tarea 7/D17)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            bloque["text"]
+            for bloque in content
+            if isinstance(bloque, dict) and isinstance(bloque.get("text"), str)
+        )
+    return ""
 
 
 class Traductor:
     """Convierte los mensajes del SDK de un lanzamiento en eventos (vía
     `ctx.eventos`) y en un `Resultado` acumulado (D11)."""
 
-    def __init__(self, instancia: str, ctx: Contexto):
+    def __init__(self, instancia: str, ctx: Contexto, agente: Agente | None = None):
         self._instancia = instancia
         self._ctx = ctx
+        # `agente` es opcional (default None) solo para no romper las pruebas
+        # que construyen un `Traductor` suelto sin agente de verdad; `lanzar()`
+        # siempre lo pasa. Lo usa la comprobación de D18/I4 de abajo (tools
+        # inesperadas en el mensaje `init`) -- sin agente no hay con qué
+        # comparar, así que esa comprobación simplemente no hace nada.
+        self._agente = agente
         self._estado_actual: str | None = None
         self._modelo_real: str | None = None
         self._respuesta = ""
         self._num_herramientas = 0
         self._resultado: ResultMessage | None = None
+        # D17: tool_use_id -> ruta (relativa a salida) de cada Write/Edit en
+        # vuelo, para emitir `fichero`/`aviso` cuando llegue su resultado real
+        # (`ToolResultBlock`, en un `UserMessage` posterior), no al permitirlo.
+        self._escrituras_en_vuelo: dict[str, str] = {}
 
     def _emitir_estado(self, estado: str) -> None:
         """Emite `estado` solo si cambia -- varias tools de lectura seguidas
@@ -195,8 +260,58 @@ class Traductor:
                     estado = _ESTADO_POR_TOOL.get(bloque.name)
                     if estado is not None:
                         self._emitir_estado(estado)
+                    # D17: recordar a qué ruta apunta este Write/Edit para
+                    # cuando llegue su resultado real -- el `fichero`/`aviso`
+                    # ya no sale de si el guardia lo permitió (eso lo hacía el
+                    # hook antes), sino de si la tool de verdad lo escribió.
+                    if bloque.name in ("Write", "Edit"):
+                        ruta = ruta_de(bloque.name, bloque.input)
+                        if ruta is not None:
+                            rel = _ruta_relativa_a_salida(ruta, self._ctx.salida)
+                            if rel is not None:
+                                self._escrituras_en_vuelo[bloque.id] = rel
                 elif isinstance(bloque, TextBlock):
                     self._respuesta = _recortar(bloque.text)
+            return
+
+        if isinstance(mensaje, UserMessage):
+            # D17: aquí llega el resultado real de un Write/Edit permitido
+            # antes por el hook -- `is_error` dice si la tool lo rechazó
+            # (p.ej. `Write` sobre un fichero no leído en la sesión).
+            if isinstance(mensaje.content, list):
+                for bloque in mensaje.content:
+                    if not isinstance(bloque, ToolResultBlock):
+                        continue
+                    ruta = self._escrituras_en_vuelo.pop(bloque.tool_use_id, None)
+                    if ruta is None:
+                        continue  # no era un Write/Edit que estuviéramos siguiendo
+                    if bloque.is_error:
+                        error = _texto_de_resultado(bloque.content)[:200]
+                        self._ctx.eventos.emitir(
+                            "aviso",
+                            self._instancia,
+                            texto=f"escritura rechazada: {ruta}: {error}",
+                        )
+                    else:
+                        self._ctx.eventos.emitir("fichero", self._instancia, ruta=ruta)
+            return
+
+        if isinstance(mensaje, SystemMessage):
+            # Comprobación en vivo, cada run, de que `tools=agente.tools`
+            # (verificado una vez en Tarea 7) sigue siendo la lista real de
+            # herramientas disponibles para esta sesión -- no solo lo que se
+            # pidió. Relacionado con D18/I4: si aquí aparecieran tools MCP de
+            # plugins/conectores, sería la prueba de que `strict_mcp_config`
+            # no bastó.
+            if mensaje.subtype == "init" and self._agente is not None:
+                tools_init = mensaje.data.get("tools") or []
+                extra = [t for t in tools_init if t not in self._agente.tools]
+                if extra:
+                    self._ctx.eventos.emitir(
+                        "aviso",
+                        self._instancia,
+                        texto=f"init trae tools no pedidas: {', '.join(extra)}",
+                    )
             return
 
         if isinstance(mensaje, ResultMessage):
@@ -210,7 +325,16 @@ class Traductor:
 
     def _estado_final(self) -> str:
         r = self._resultado
-        if re.search(r"\bbloqueado\b", self._respuesta):
+        # Corrección tras la revisión de la Tarea 7: el detector de
+        # "bloqueado" era sensible a mayúsculas y no distinguía una negación
+        # ("no estoy bloqueado") de una afirmación. Los dos lookbehind son de
+        # anchura fija cada uno (lo único que exige `re`), así que se pueden
+        # encadenar: ninguno de los dos bloquea por sí solo "tampoco
+        # bloqueado" (no es la negación que había que excluir -- el
+        # arquitecto no la pidió), pero sí "no bloqueado" y "no estoy
+        # bloqueado". `bloquead[oa]` cubre también la forma femenina
+        # ("bloqueada").
+        if re.search(r"(?<!no )(?<!no estoy )bloquead[oa]", self._respuesta, re.IGNORECASE):
             return "bloqueado"
         if r is not None and (r.is_error or r.subtype != "success"):
             return "error"
@@ -233,6 +357,7 @@ class Traductor:
             tokens_out=usage.get("output_tokens", 0),
             coste_usd=(r.total_cost_usd or 0) if r is not None else 0.0,
             num_herramientas=self._num_herramientas,
+            num_turns=(r.num_turns if r is not None else 0),
         )
 
 
@@ -255,7 +380,7 @@ async def lanzar(agente: Agente, instancia: str, encargo: str, ctx: Contexto) ->
     a `lanzar` -- `estado`/`herramienta`/`denegado`/`fichero`/`aviso` -- nunca
     `lanzado`/`respuesta`/`fin_agente`, que son responsabilidad del guion
     (D5, ver `orquestar.py`)."""
-    traductor = Traductor(instancia, ctx)
+    traductor = Traductor(instancia, ctx, agente)
     hook = hacer_hook(agente, instancia, ctx)
     opts = opciones(agente, ctx, hook)
 
