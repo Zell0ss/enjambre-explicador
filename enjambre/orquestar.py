@@ -65,6 +65,12 @@ def _encargo(rol: str, repo: Path, salida: Path, **campos: object) -> str:
 
     D2: al redactor y al novato no se les pasa `REPO` -- no ven el repo, solo
     lo que otros agentes dejaron en `SALIDA`.
+
+    D18: toda instancia recibe además una línea aclarando que `SALIDA/x`
+    significa `x` -- hipótesis de la prueba de humo: el novato parecía tomar
+    "SALIDA/articulo.md" como una cadena literal (con la subcadena "SALIDA")
+    en vez de entender que su cwd (`opciones()`, `cwd=ctx.salida`) YA es esa
+    carpeta.
     """
     lineas = []
     if rol not in ("redactor", "novato"):
@@ -72,6 +78,9 @@ def _encargo(rol: str, repo: Path, salida: Path, **campos: object) -> str:
     lineas.append(f"SALIDA={salida}")
     for clave, valor in campos.items():
         lineas.append(f"{clave}={valor}")
+    lineas.append(
+        "Tu directorio de trabajo ya es SALIDA: donde tus instrucciones dicen SALIDA/x, usa x o la ruta absoluta."
+    )
     return "\n".join(lineas) + "\n"
 
 
@@ -136,6 +145,7 @@ async def _paso(
         tokens_out=resultado.tokens_out,
         coste_usd=resultado.coste_usd,
         num_herramientas=resultado.num_herramientas,
+        num_turns=resultado.num_turns,
     )
     return resultado
 
@@ -262,6 +272,24 @@ async def orquestar(
             # que nunca llegó a lanzar nada).
             _comprueba_tope(coste, tope_usd)
             eventos.emitir("vuelta", n=n)
+
+            if n >= 2:
+                # D16: la tool `Write` real no reescribe un fichero que no se
+                # haya leído en ESTA sesión del agente -- y el novato tiene
+                # prohibido leer `dudas.md` (D2/D8), así que sin este borrado
+                # su segunda escritura (vuelta 2 en adelante) fallaría
+                # siempre. Lo mismo para `verificacion.md`/verificador, por
+                # uniformidad, aunque ahí el riesgo es menor (sí puede leer
+                # `articulo.md`... pero no su propio `verificacion.md`
+                # previo). Seguro borrarlos aquí: ya están archivados en
+                # `vueltas/<n-1>/` por la copia D13 de más abajo, que para la
+                # vuelta `n-1` ya se ejecutó en la iteración anterior de este
+                # mismo bucle -- antes de llegar aquí, nunca después.
+                for nombre in ("verificacion.md", "dudas.md"):
+                    ruta = salida / nombre
+                    if ruta.exists():
+                        ruta.unlink()
+
             r_ver, r_nov = await asyncio.gather(
                 lanza("verificador", "verificador", VUELTA=n),
                 lanza("novato", "novato", VUELTA=n),
@@ -272,6 +300,16 @@ async def orquestar(
             _exige_terminado("verificador", r_ver)
             r_nov = _resultado_o_fallo("novato", r_nov)
             _exige_terminado("novato", r_nov)
+
+            if n >= 2:
+                # D16: exigir que de verdad se hayan vuelto a escribir EN esta
+                # vuelta -- tras el borrado de arriba, si el agente no las
+                # reescribe (p.ej. porque su `Write` fue rechazada, o porque
+                # el guion de pruebas no las genera) el run debe parar con
+                # `falta:<fichero>`, nunca seguir leyendo en silencio lo que
+                # ya no está.
+                _exige(salida, "verificacion.md")
+                _exige(salida, "dudas.md")
 
             # D13: copiar verificacion.md/dudas.md a vueltas/<n>/ antes de que
             # la vuelta siguiente los sobrescriba (en la fase 1 la vuelta 1 se
