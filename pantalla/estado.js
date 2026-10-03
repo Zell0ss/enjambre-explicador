@@ -26,7 +26,9 @@ export function aplicar(estado, evento) {
     if (evento.t) {
       const time = evento.t.substring(11, 19); // Extract hh:mm:ss from ISO string
       const agente = evento.agente || "";
-      const line = `${time} ${agente} ${text}`.trim();
+      // Eventos sin agente (run_inicio, vuelta, run_fin) dejarían un hueco
+      // doble entre la hora y el texto si no se colapsa.
+      const line = `${time} ${agente} ${text}`.replace(/ {2,}/g, " ").trim();
       s.bitacora.push(line);
       // Keep only last 50 lines
       if (s.bitacora.length > 50) {
