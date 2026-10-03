@@ -187,6 +187,27 @@ def test_bloqueado_no_bloqueado_no_cuenta(tmp_path):
     assert t.resultado().estado_final != "bloqueado"
 
 
+def test_bloqueado_desbloqueado_no_cuenta(tmp_path):
+    # Regresión real encontrada en revisión: la reescritura case-insensitive
+    # había perdido los `\b` originales, y "bloquead[oa]" es substring de
+    # "desbloqueado" -- que significa justo lo CONTRARIO (acceso concedido).
+    c = ctx(tmp_path)
+    t = Traductor("redactor", c)
+    t.procesar(am([TextBlock("He desbloqueado el acceso")]))
+    assert t.resultado().estado_final != "bloqueado"
+
+
+def test_bloqueado_casino_bloqueado_si_cuenta(tmp_path):
+    # Otra regresión de la misma reescritura, en la otra dirección: sin `\b`
+    # DENTRO del lookbehind de negación, "casino bloqueado" se denegaba por
+    # error -- los 3 caracteres que preceden a "bloqueado" ahí son "no " (el
+    # final de "casiNO "), aunque la palabra no sea "no" suelta.
+    c = ctx(tmp_path)
+    t = Traductor("redactor", c)
+    t.procesar(am([TextBlock("casino bloqueado")]))
+    assert t.resultado().estado_final == "bloqueado"
+
+
 def test_bloqueado_mayuscula_cuenta(tmp_path):
     c = ctx(tmp_path)
     t = Traductor("redactor", c)
@@ -219,6 +240,29 @@ def test_init_sin_tools_extra_no_emite_aviso(tmp_path):
     t = Traductor("cartografo", c, agente)
     t.procesar(SystemMessage(subtype="init", data={"tools": list(agente.tools)}))
     assert not [e for e in leer(c) if e["tipo"] == "aviso"]
+
+
+def test_init_sin_clave_tools_avisa_que_la_comprobacion_no_se_hizo(tmp_path):
+    # La clave `tools` del `init` real está confirmada como requerida (ver
+    # cabecera del módulo), pero si una CLI futura la quita o la renombra,
+    # `data.get("tools") or []` se comportaría igual que "cero tools extra" --
+    # indistinguible de un chequeo que sí corrió y salió limpio. Debe avisar
+    # de que el chequeo no se pudo hacer, no callar.
+    c = ctx(tmp_path)
+    agente = cargar("cartografo")
+    t = Traductor("cartografo", c, agente)
+    t.procesar(SystemMessage(subtype="init", data={}))
+    [a] = [e for e in leer(c) if e["tipo"] == "aviso"]
+    assert a["texto"] == "init sin lista tools: comprobación D18/I4 no aplicada"
+
+
+def test_init_con_tools_no_lista_avisa_que_la_comprobacion_no_se_hizo(tmp_path):
+    c = ctx(tmp_path)
+    agente = cargar("cartografo")
+    t = Traductor("cartografo", c, agente)
+    t.procesar(SystemMessage(subtype="init", data={"tools": None}))
+    [a] = [e for e in leer(c) if e["tipo"] == "aviso"]
+    assert a["texto"] == "init sin lista tools: comprobación D18/I4 no aplicada"
 
 
 # --- num_turns: de ResultMessage a Resultado ------------------------------------

@@ -259,12 +259,46 @@ async def test_novato_sin_dudas_en_vuelta_2_para_el_run_con_falta_dudas(repo, tm
     assert (tmp_path / "s" / "agora" / "r1" / "vueltas" / "1" / "dudas.md").exists()
 
 
+def _verificador_sin_verificacion(agente, instancia, encargo, ctx):
+    return Resultado("terminado", coste_usd=0.01)  # no toca verificacion.md
+
+
+async def test_verificador_sin_verificacion_en_vuelta_2_para_el_run_con_falta_verificacion(repo, tmp_path):
+    """Simétrico al de `dudas.md` arriba, para el otro fichero que D16
+    borra-y-exige: si el verificador no reescribe `verificacion.md` en la
+    vuelta 2, el run debe parar con `falta:verificacion.md` (no seguir con
+    el `dudas.md` del novato, que sí se reescribió normal)."""
+    lanzar = hacer_lanzar_falso({
+        "verificador": [_verificacion_con_fallos, _verificador_sin_verificacion],
+    })
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin["motivo"] == "falta:verificacion.md"
+
+
 async def test_vuelta_1_no_se_ve_afectada_por_el_borrado_de_d16(repo, tmp_path):
     """D16 actúa solo desde la vuelta >= 2: en la vuelta 1 no hay nada que
     borrar (ni verificacion.md ni dudas.md existen todavía) y el run normal
     de una sola vuelta debe seguir aprobando igual que antes del parche."""
     fin = await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
     assert fin["motivo"] == "aprobado" and fin["vueltas"] == 1
+
+
+# --- num_turns: de Resultado al evento fin_agente ---------------------------
+
+
+def _cartografo_con_num_turns(agente, instancia, encargo, ctx):
+    (ctx.salida / "mapa.md").write_text("# Mapa (de pega)\n")
+    return Resultado("terminado", coste_usd=0.01, num_turns=3)
+
+
+async def test_num_turns_llega_al_evento_fin_agente(repo, tmp_path):
+    lanzar = hacer_lanzar_falso({"cartografo": [_cartografo_con_num_turns]})
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin["motivo"] == "aprobado"  # el resto del run sigue de pega, normal
+    [fin_cartografo] = [
+        e for e in eventos(tmp_path / "s") if e["tipo"] == "fin_agente" and e["agente"] == "cartografo"
+    ]
+    assert fin_cartografo["num_turns"] == 3
 
 
 async def test_guion_con_entrada_asincrona(repo, tmp_path):
