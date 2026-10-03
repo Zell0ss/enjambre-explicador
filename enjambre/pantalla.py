@@ -44,13 +44,19 @@ def _resuelve_dentro(base: Path, ruta_relativa: str) -> Path | None:
     (cualquier `..`, incluido uno que solo aparece tras decodificar un
     `%2F`, o un symlink dentro de `base` que apunte fuera) devuelve `None`:
     es el único punto de autorización de las rutas con entrada de usuario."""
-    base_r = base.resolve()
-    candidato = base_r
-    for segmento in ruta_relativa.split("/"):
-        if segmento in ("", "."):
-            continue
-        candidato = candidato / segmento
-    candidato = candidato.resolve()
+    try:
+        base_r = base.resolve()
+        candidato = base_r
+        for segmento in ruta_relativa.split("/"):
+            if segmento in ("", "."):
+                continue
+            candidato = candidato / segmento
+        candidato = candidato.resolve()
+    except ValueError:
+        # Byte nulo u otro valor que Path/os.fspath rechaza (hallazgo Minor
+        # de la revisión de seguridad del commit df61f0d): no autorizado,
+        # igual que un traversal -- nunca una excepción sin capturar.
+        return None
     if candidato == base_r or candidato.is_relative_to(base_r):
         return candidato
     return None
@@ -79,9 +85,15 @@ def _listar_runs(salidas: Path) -> list[dict]:
                     primera = f.readline().strip()
                     if primera:
                         try:
-                            inicio = json.loads(primera).get("t")
+                            primer_evento = json.loads(primera)
                         except json.JSONDecodeError:
-                            inicio = None
+                            primer_evento = None
+                        # Important 3 (revisión df61f0d): la primera línea
+                        # puede ser JSON válido y no ser un objeto (p.ej.
+                        # "[1]") -- sin este isinstance, `.get("t")` lanza
+                        # AttributeError y tumba /api/runs entero.
+                        if isinstance(primer_evento, dict):
+                            inicio = primer_evento.get("t")
                     for linea in f:
                         linea = linea.strip()
                         if not linea:
@@ -90,9 +102,12 @@ def _listar_runs(salidas: Path) -> list[dict]:
                             evento = json.loads(linea)
                         except json.JSONDecodeError:
                             continue  # línea corrupta: se ignora, no tumba /api/runs
-                        if evento.get("tipo") == "run_fin":
+                        if isinstance(evento, dict) and evento.get("tipo") == "run_fin":
                             motivo = evento.get("motivo")
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError cubre UnicodeDecodeError (bytes UTF-8 inválidos
+                # en el fichero): ese run concreto no sale en la lista, pero
+                # /api/runs sigue respondiendo 200 con el resto (Important 3).
                 continue
             runs.append(
                 {
@@ -213,11 +228,22 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
 
     def _servir_directo(self, repo: str, run: str) -> None:
         """SSE: emite las líneas ya existentes de `eventos.jsonl` y luego
-        sondea cada 0,5 s. Solo se emite una línea cuando está completa
-        (terminada en `\\n`); el resto a medio escribir se guarda hasta la
-        siguiente lectura (Foco de revisión #3: 8 lectores escribiendo a la
-        vez no debe producir un `data:` con JSON roto). Cierra la conexión
-        en cuanto envía un evento `run_fin`."""
+        sondea cada 0,5 s. Se lee en BINARIO y se corta por `b"\\n"`
+        (Important 2, revisión df61f0d): un carácter UTF-8 multibyte puede
+        quedar partido entre dos escrituras de un lector concurrente (Foco
+        de revisión #3); decodificar solo tras encontrar el `\\n` evita que
+        ese corte tumbe el stream con un `UnicodeDecodeError` a medio leer
+        un fichero en modo texto. El resto sin `\\n` (que puede ser tanto
+        una línea JSON a medias como un carácter multibyte a medias) se
+        guarda hasta la siguiente lectura. Cierra la conexión en cuanto
+        envía un evento `run_fin`.
+
+        Important 1 (revisión df61f0d): si no hay datos nuevos, cada
+        `_SONDEOS_KEEPALIVE` sondeos (sin esperar a que el fichero cambie)
+        se escribe un comentario SSE (`: \\n\\n`) solo para que un `write`/
+        `flush` sobre un socket ya cerrado por el cliente falle y lo
+        detecte -- si no, un cliente desconectado sobre un run sin
+        `run_fin` deja el hilo de sondeo vivo para siempre."""
         run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
         if run_dir is None or not run_dir.is_dir():
             self.send_error(404)
@@ -232,20 +258,39 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
 
-        resto = ""
-        with eventos_path.open("r", encoding="utf-8") as f:
+        _SONDEOS_KEEPALIVE = 2  # ~1 s de inactividad (sondeo cada 0,5 s)
+        sondeos_sin_datos = 0
+        resto = b""
+        with eventos_path.open("rb") as f:
             while True:
                 trozo = f.read()
                 if not trozo:
+                    sondeos_sin_datos += 1
+                    if sondeos_sin_datos >= _SONDEOS_KEEPALIVE:
+                        sondeos_sin_datos = 0
+                        try:
+                            self.wfile.write(b": \n\n")
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            return  # cliente desconectado: cierra sin traza
                     time.sleep(0.5)
                     continue
+
+                sondeos_sin_datos = 0
                 resto += trozo
-                *completas, resto = resto.split("\n")
-                for linea in completas:
-                    if not linea.strip():
+                *completas, resto = resto.split(b"\n")
+                for linea_bytes in completas:
+                    if not linea_bytes.strip():
                         continue
-                    self.wfile.write(f"data: {linea}\n\n".encode("utf-8"))
-                    self.wfile.flush()
+                    try:
+                        linea = linea_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        continue  # línea realmente corrupta (no solo partida): se descarta
+                    try:
+                        self.wfile.write(f"data: {linea}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        return  # cliente desconectado: cierra sin traza
                     try:
                         tipo = json.loads(linea).get("tipo")
                     except json.JSONDecodeError:
