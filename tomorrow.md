@@ -2,72 +2,104 @@
 
 ## Estado
 
-**Tareas 1-7: HECHAS**
+**Tareas 1-11: HECHAS. Fin de H4 — esperando revisión de Josem antes de la Tarea 12.**
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
 - Tarea 3: `enjambre/guardia.py` (`permitido`, el muro de permisos, D8).
 - Tarea 4: `enjambre/parsers.py` (`ids_de_piezas`, `fallos`, `veredicto`, `SalidaIlegible`).
 - Tarea 5: `enjambre/tipos.py` + `enjambre/eventos.py` (`Resultado`, `Contexto`, `Lanzar`, `Eventos`).
-- Tarea 6: `enjambre/orquestar.py` (el guion: `orquestar`, `main`) + `enjambre/falso.py`
-  (`hacer_lanzar_falso`, el `lanzar` de mentira para probar y hacer demos sin gastar
-  tokens). Tests: `tests/test_orquestar.py` (12 pruebas, todas verdes). Suite completa:
-  63 passed.
-- Smoke test manual (`--falso` sobre `/data/agora`): termina en ~6 s con `aprobado`,
-  `jq -c .tipo salidas/agora/*/eventos.jsonl` muestra todos los tipos salvo `denegado`
-  y `aviso` (ninguno de los dos aplica sin el guardia real ni un modelo real cambiando
-  de versión).
-- Confirmado por inspección de código + import con `claude_agent_sdk` bloqueado:
-  ningún módulo de la Tarea 6 importa el SDK a nivel de módulo; `main()` lo importa
-  dentro de su propio cuerpo (D6).
-- Tarea 7: `enjambre/lanzador.py` (`lanzar`, `opciones`, `hacer_hook`, `Traductor`) —
-  la única costura con `claude_agent_sdk` (D6), confirmado por grep sobre todo el
-  repo. Tests: `tests/test_lanzador.py` (5 pruebas, todas verdes a la primera).
-  Suite completa: 88 passed. Investigación del SDK instalado + smoke test real
-  [API] con el novato: ver `CLAUDE.md` → "Verificado del SDK" (las 4 preguntas del
-  brief quedaron confirmadas; además salió un hallazgo no pedido, crítico, sobre
-  `Write` y ficheros preexistentes — ver siguiente sección).
+- Tarea 6: `enjambre/orquestar.py` (el guion: `orquestar`, `main`) + `enjambre/falso.py`.
+- Tarea 7: `enjambre/lanzador.py` (`lanzar`, `opciones`, `hacer_hook`, `Traductor`) — la única
+  costura con `claude_agent_sdk` (D6). Investigación del SDK real + smoke test [API]: ver
+  `CLAUDE.md` → "Verificado del SDK".
+- **Parche D16-D18** (tras la Tarea 7, antes del primer run real con ≥2 vueltas): D16 (borrar
+  y exigir `verificacion.md`/`dudas.md` desde vuelta ≥2, luego también en vuelta 1 — ver más
+  abajo), D17 (`fichero`/`aviso` desde el resultado real de la tool, no desde el hook), D18
+  (`strict_mcp_config=True`, confirmado como causa real del gasto anómalo de tokens — ver
+  diagnóstico [API] post-D18 más abajo). Además: regex de "bloqueado" insensible a mayúsculas
+  y sin colarse en negaciones; `num_turns` hasta `fin_agente`; aviso si el `init` trae tools
+  no pedidas.
+- **Dos arreglos pedidos por Josem tras revisar el parche D16-D18**: (1) la exigencia D16
+  (`_exige verificacion.md/dudas.md`) ahora corre también en la vuelta 1, no solo desde la 2 —
+  antes, un fallo de escritura en la vuelta 1 se demoraba un ciclo completo (redactor +
+  verificador + novato) antes de notarse; (2) `hacer_hook`/`Traductor` comparten un set de
+  `tool_use_id` ya denegados, para que una escritura denegada por el guardia nunca dispare
+  TAMBIÉN un `aviso` de "escritura rechazada" por el mismo hecho; de paso, el `detalle` de un
+  `Glob` denegado ya no sale vacío (caía a `""` porque `ruta_de` no cubre `pattern`).
+- **Tarea 8**: `enjambre/pantalla.py` — servidor HTTP stdlib (`ThreadingHTTPServer`), rutas de
+  §5.1, protección de rutas por `_resuelve_dentro` (resolve + `is_relative_to`). Revisión de
+  seguridad: sin fugas de contenido (24 casos de path traversal probados entre dos pasadas de
+  revisión — symlinks, doble encoding, bytes nulos, barra invertida, UTF-8 overlong — todos
+  404/vacío). 3 rondas de endurecimiento de robustez tras revisión: keepalive SSE para detectar
+  cliente desconectado, lectura binaria con buffer para no partir un carácter UTF-8 multibyte a
+  medio escribir, aislamiento por-run en `/api/runs` para que un `eventos.jsonl` corrupto no
+  tumbe la lista entera.
+- **Tarea 9**: `pantalla/estado.js` — reductor de estado puro (`inicial`, `aplicar`, `ROLES`).
+  Corregido tras lectura propia (no lo pilla el test literal): la regla de compatibilidad para
+  tipos de evento desconocidos es "solo t", pero tocaba también la bitácora.
+- **Tarea 10**: `pantalla/index.html` + `pantalla/escena.js` — página, modo repetición (reloj
+  virtual con compresión de huecos >5s a 1s), render provisional de rectángulos de color.
+  Josem lo probó en navegador real (captura en `image.png`, ya no versionada) y pidió retoques
+  — ver Tarea 11.
+- **Tarea 11** (arte pixel, D14): `pantalla/sprites.js` nuevo — 7 roles × 5 estados × 2
+  fotogramas generados por código (no matrices a mano), fondo del barco con parpadeo, loro
+  guardián (`LORO`, volando/posado), fuente de mapa de bits 5×7 propia +
+  `dibujarTexto`/`medirTexto` (nada de `ctx2d.font`). `escena.js` repintado para usar sprites
+  reales. Además, los 8 puntos que Josem pidió tras revisar la captura de la Tarea 10, todos
+  resueltos:
+  1. Sprites — hechos.
+  2. Fuente de mapa de bits — hecha, usada en bocadillos/bitácora/inventario.
+  3. Escala entera ×1-×4 (`_escalarLienzo`, ya existía desde la Tarea 10, confirmada) +
+     `image-rendering: pixelated` + `imageSmoothingEnabled = false`.
+  4. Bocadillos con ruta relativa a `salida`/`repo` — `_relativiza()` en `estado.js`, con test.
+  5. Inventario con nombre corto visible bajo cada icono.
+  6. `fin_agente` en la bitácora ya no repite el nombre del agente: muestra
+     `estado_final`/duración/coste.
+  7. Barra de repetición: confirmado que SÍ funciona (`max`/`oninput` correctos) — lo que
+     faltaba en la captura de Josem era solo el recorte de pantalla, no el código. Verificado
+     dos veces de forma independiente (por el implementador vía `--dump-dom`, y por mí vía CDP).
+  8. Esta reescritura de `tomorrow.md`.
+
+  **Bug crítico encontrado en verificación propia (no en código, en el run real):** el modo
+  repetición pasaba a `pintar()` el reloj VIRTUAL comprimido (`t0 + tVirtual`) como `ahoraMs`,
+  pero la visibilidad de bocadillo/loro compara contra el timestamp REAL sin comprimir de cada
+  evento (`ahoraMs - Date.parse(evento.t)`). En un run real con huecos de verdad el desfase
+  crece sin límite (medido: 85s de deriva en el evento 90 de `agora-20261003-1444`), así que la
+  edad siempre salía negativa y bocadillo/loro nunca se pintaban — invisible en pruebas
+  `--falso` porque esos runs no tienen huecos que comprimir. Arreglado en `17f954c`: `ahoraMs`
+  pasa a ser el timestamp real del último evento aplicado; `vTimes`/el ritmo de reproducción no
+  se tocan. Verificado independientemente por mí contra el servidor real (100.87.64.121:8790)
+  con un script CDP propio (`captura.mjs`, sin dependencias nuevas — `WebSocket`/`fetch` nativos
+  de Node 22 contra `google-chrome --headless=new`): loro posado + "¡Prohibido!" y bocadillos sí
+  se ven ahora.
+
+  Captura final entregada a Josem: `docs/capturas/tarea11-mitad-lectores-agora-20261003-1444.png`
+  (run real, evento 138, mitad de los 7 lectores en paralelo).
+
+  Commits: a6cdfc1 (estado.js), 45f054e (sprites/escena), 17f954c (arreglo del reloj), bb78055
+  (captura). 10/10 tests JS, 126/126 Python.
 
 ## Siguiente
 
-**Fin de H3 por la parte del programador** (instrucción explícita del plan,
-`task-7-brief.md`). El primer run real completo
-(`python -m enjambre.orquestar --repo /data/agora`) lo lanza Josem.
+**Fin de H4 — el plan pide parar y pedir revisión antes de la Tarea 12** (modo directo, H5).
+No arrancar la Tarea 12 sin que Josem lo confirme.
 
-**Bloqueante para un run real con ≥2 vueltas, necesita decisión del arquitecto
-antes de intentarlo** (no se ha tocado `guardia.py` ni `orquestar.py` en la
-Tarea 7 — fuera de su alcance): el tool real `Write` del CLI exige haber leído
-con éxito un fichero existente en la misma sesión antes de poder
-sobrescribirlo (mismo invariante que `Edit`, hardcodeado en el binario,
-`"File has not been read yet. Read it first before writing to it."` — no es
-una opción de `ClaudeAgentOptions`). El novato puede escribir `dudas.md` pero
-tiene prohibido leerlo (D8, para no sesgarse con sus dudas de la vuelta
-anterior). En la vuelta 1 de un run real `dudas.md` no existe aún, así que no
-pasa nada; **desde la vuelta 2, `dudas.md` ya existe (de la vuelta 1) y el
-novato ya no puede reescribirlo nunca** — `Write` falla, el novato no termina
-limpio, `orquestar.py` para el run con `fallo:novato:<estado>`. Reproducido
-limpio con un agente sintético (ver `CLAUDE.md` → "Verificado del SDK" para
-el detalle y la cita literal del error). Arreglo más simple que no toca el
-muro: que `orquestar.py` borre/trunque `salida/dudas.md` antes de cada
-lanzamiento del novato. Queda para decidir con el arquitecto (probablemente
-un `D<n>` nuevo en `ENJAMBRE-DISENIO.md`), no implementado aquí.
+### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 
-Las dos incógnitas que la Tarea 3 había dejado pendientes para cuando se
-conectara el SDK real quedan resueltas:
-- **Glob/Grep, path traversal vía patrón:** resuelto. `hacer_hook` (Tarea 7)
-  pasa `patron=tool_input.get("pattern")` a `permitido()` específicamente para
-  `Glob` (el parche de la Tarea 3 al guardia ya validaba la forma del
-  patrón; solo faltaba conectarlo a un hook real).
-- **I2 — ¿`setting_sources=[]` aísla de verdad?:** confirmado que sí, por
-  código (`types.py`) y empíricamente (ninguna respuesta del novato mostró
-  rastro del CLAUDE.md global de Josem; el argv real del subproceso lleva
-  `--setting-sources=` vacío).
+El tool real `Write` del CLI exige haber leído con éxito un fichero existente en la misma
+sesión antes de sobrescribirlo (mismo invariante que `Edit`, hardcodeado en el binario —
+`"File has not been read yet. Read it first before writing to it."`). Esto chocaba con el muro
+del novato (D8: prohibido leer `dudas.md`) desde la vuelta 2 en adelante. **Resuelto por D16**
+(`orquestar.py` borra `verificacion.md`/`dudas.md` antes de relanzar verificador+novato en cada
+vuelta, incluida ahora la vuelta 1, y exige que se reescriban después). Detalle completo y cita
+literal del error: `CLAUDE.md` → "Verificado del SDK".
 
-### `fin_agente` real del smoke test [API] (novato, Haiku)
+Las dos incógnitas que la Tarea 3 había dejado pendientes para cuando se conectara el SDK real
+quedan resueltas (Glob/Grep path traversal vía patrón, conectado en la Tarea 7; I2 —
+`setting_sources=[]` aísla de verdad, confirmado por código y empíricamente).
 
-No viene literal del jsonl porque el smoke test llamó a `lanzar()` directamente
-(sin pasar por `orquestar.py`, que es quien emite `fin_agente`); estos son los
-mismos campos, tomados del `Resultado` real devuelto:
+### `fin_agente` real del smoke test [API] (novato, Haiku) — histórico, Tarea 7
 
 ```json
 {"tipo": "fin_agente", "agente": "novato", "estado_final": "terminado",
@@ -76,84 +108,17 @@ mismos campos, tomados del `Resultado` real devuelto:
  "num_herramientas": 5}
 ```
 
-`estado_final` salió `"terminado"` porque el `ResultMessage.subtype` fue
-`"success"` y la respuesta no matcheaba `\bbloqueado\b` — pero el propio
-intento de `Write` de `dudas.md` chocó con el bloqueo de arriba (no se
-reescribió). El `Traductor` no tiene manera de distinguir "escribí bien" de
-"la tool rechazó mi escritura pero seguí sin bloquearme": ese distingo solo
-existe en el campo `result` crudo del `ResultMessage` (visible en el smoke
-test, no en los 500 caracteres de `respuesta`). Anotado como hallazgo, no
-arreglado — no está en el contrato de `Traductor` que pide el brief.
+El gasto anómalo de `tokens_in` de este run quedó explicado y resuelto por D18 — ver el
+diagnóstico siguiente.
 
-### Diagnóstico [API] post-D18: I4
+### Diagnóstico [API] post-D18: I4 — histórico, confirmado
 
-Una sola llamada real (novato, Haiku), tras el parche D16-D18
-(`strict_mcp_config=True` en `enjambre/lanzador.py::opciones()`), para
-confirmar o falsar I4 ("el gasto anómalo de 836K tokens de entrada del smoke
-test de la Tarea 7 venía de tools MCP de este entorno viajando en cada turno,
-sin filtrar por `strict_mcp_config`"). Repo real, sin tocar nada committeado:
-copia temporal de `tests/fixtures/agora_test/` en `/tmp` (con `dudas.md`
-borrado de la copia, para que el `Write` del novato no chocara con D16 por un
-motivo ajeno a esta medición), `REPO=/data/agora` (el novato no lee nada
-`REPO`-scoped), `SALIDA=` esa copia, `VUELTA=1`, encargo construido con el
-`_encargo()` real de `orquestar.py` (incluye la línea D18 de `SALIDA/x`
-significa `x`). Script suelto en el scratchpad de la sesión, no versionado.
-
-**`usage` crudo del `ResultMessage`:**
-
-```json
-{
-  "input_tokens": 3044,
-  "cache_creation_input_tokens": 18070,
-  "cache_read_input_tokens": 11163,
-  "output_tokens": 7349,
-  "output_tokens_details": {"thinking_tokens": 5176},
-  "server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0},
-  "service_tier": "standard",
-  "cache_creation": {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 18070},
-  "inference_geo": "not_available",
-  "iterations": [
-    {"input_tokens": 8, "output_tokens": 252, "cache_read_input_tokens": 11163,
-     "cache_creation_input_tokens": 6907,
-     "cache_creation": {"ephemeral_5m_input_tokens": 6907, "ephemeral_1h_input_tokens": 0},
-     "type": "message"}
-  ],
-  "speed": "standard",
-  "fallback_credit": null
-}
-```
-
-**Init `SystemMessage.tools`:** `["Read", "Write"]` (longitud 2) — exactamente
-`agente.tools` de `novato.md`, cero tools extra (ninguna MCP de plugins/
-conectores de este entorno). La comprobación en vivo D18/I4 del propio
-`Traductor` (lanzador.py §`procesar`, caso `SystemMessage`) no emitió ningún
-`aviso` de "tools no pedidas", coherente con esto.
-
-**`Resultado` (contrato `enjambre.tipos.Resultado`):**
-
-```
-estado_final=terminado
-modelo_real=claude-haiku-4-5-20251001
-duracion_s=80.597
-tokens_in=32277   (3044 + 18070 + 11163)
-tokens_out=7349
-coste_usd=0.0645568
-num_herramientas=2
-num_turns=3
-```
-
-**Veredicto I4: CONFIRMADO.** `tokens_in=32277`, muy por debajo del umbral de
-falsación (200K) y casi 26× menos que los 836,833 del smoke test original
-(`fin_agente` de arriba) con el mismo rol, mismo modelo, fixture equivalente.
-`strict_mcp_config=True` (D18) fue un contribuyente real a la anomalía. No se
-ha hecho ninguna llamada adicional para aislar si el resto de la diferencia
-(32K vs. lo que costaría un novato "limpio" sin ningún MCP de por medio) es
-ruido de fixture/cache o algo más — queda para quien retome I4 si hiciera
-falta, no se ha chequeado aquí (tope: una sola llamada, según el brief).
-
-Fixtures committeadas (`tests/fixtures/agora_test/`) sin tocar — solo se usó
-una copia temporal en `/tmp`, borrada tras el diagnóstico junto con el script
-suelto.
+Una sola llamada real (novato, Haiku) tras `strict_mcp_config=True` (D18): `tokens_in=32277`
+frente a los 836,833 de arriba (~26× menos), muy por debajo del umbral de falsación de I4
+(200K). **Veredicto: CONFIRMADO**, `strict_mcp_config=True` fue un contribuyente real al gasto
+anómalo. Init `SystemMessage.tools` = `["Read", "Write"]` exacto, cero tools MCP extra.
+`usage` crudo y `Resultado` completos conservados en el historial de git de este fichero si
+hace falta revisarlos (commit 30162b2).
 
 ## Bloqueos / le toca a Josem
 
