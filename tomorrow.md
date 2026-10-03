@@ -85,6 +85,76 @@ existe en el campo `result` crudo del `ResultMessage` (visible en el smoke
 test, no en los 500 caracteres de `respuesta`). Anotado como hallazgo, no
 arreglado — no está en el contrato de `Traductor` que pide el brief.
 
+### Diagnóstico [API] post-D18: I4
+
+Una sola llamada real (novato, Haiku), tras el parche D16-D18
+(`strict_mcp_config=True` en `enjambre/lanzador.py::opciones()`), para
+confirmar o falsar I4 ("el gasto anómalo de 836K tokens de entrada del smoke
+test de la Tarea 7 venía de tools MCP de este entorno viajando en cada turno,
+sin filtrar por `strict_mcp_config`"). Repo real, sin tocar nada committeado:
+copia temporal de `tests/fixtures/agora_test/` en `/tmp` (con `dudas.md`
+borrado de la copia, para que el `Write` del novato no chocara con D16 por un
+motivo ajeno a esta medición), `REPO=/data/agora` (el novato no lee nada
+`REPO`-scoped), `SALIDA=` esa copia, `VUELTA=1`, encargo construido con el
+`_encargo()` real de `orquestar.py` (incluye la línea D18 de `SALIDA/x`
+significa `x`). Script suelto en el scratchpad de la sesión, no versionado.
+
+**`usage` crudo del `ResultMessage`:**
+
+```json
+{
+  "input_tokens": 3044,
+  "cache_creation_input_tokens": 18070,
+  "cache_read_input_tokens": 11163,
+  "output_tokens": 7349,
+  "output_tokens_details": {"thinking_tokens": 5176},
+  "server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0},
+  "service_tier": "standard",
+  "cache_creation": {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 18070},
+  "inference_geo": "not_available",
+  "iterations": [
+    {"input_tokens": 8, "output_tokens": 252, "cache_read_input_tokens": 11163,
+     "cache_creation_input_tokens": 6907,
+     "cache_creation": {"ephemeral_5m_input_tokens": 6907, "ephemeral_1h_input_tokens": 0},
+     "type": "message"}
+  ],
+  "speed": "standard",
+  "fallback_credit": null
+}
+```
+
+**Init `SystemMessage.tools`:** `["Read", "Write"]` (longitud 2) — exactamente
+`agente.tools` de `novato.md`, cero tools extra (ninguna MCP de plugins/
+conectores de este entorno). La comprobación en vivo D18/I4 del propio
+`Traductor` (lanzador.py §`procesar`, caso `SystemMessage`) no emitió ningún
+`aviso` de "tools no pedidas", coherente con esto.
+
+**`Resultado` (contrato `enjambre.tipos.Resultado`):**
+
+```
+estado_final=terminado
+modelo_real=claude-haiku-4-5-20251001
+duracion_s=80.597
+tokens_in=32277   (3044 + 18070 + 11163)
+tokens_out=7349
+coste_usd=0.0645568
+num_herramientas=2
+num_turns=3
+```
+
+**Veredicto I4: CONFIRMADO.** `tokens_in=32277`, muy por debajo del umbral de
+falsación (200K) y casi 26× menos que los 836,833 del smoke test original
+(`fin_agente` de arriba) con el mismo rol, mismo modelo, fixture equivalente.
+`strict_mcp_config=True` (D18) fue un contribuyente real a la anomalía. No se
+ha hecho ninguna llamada adicional para aislar si el resto de la diferencia
+(32K vs. lo que costaría un novato "limpio" sin ningún MCP de por medio) es
+ruido de fixture/cache o algo más — queda para quien retome I4 si hiciera
+falta, no se ha chequeado aquí (tope: una sola llamada, según el brief).
+
+Fixtures committeadas (`tests/fixtures/agora_test/`) sin tocar — solo se usó
+una copia temporal en `/tmp`, borrada tras el diagnóstico junto con el script
+suelto.
+
 ## Bloqueos / le toca a Josem
 
 **LogCentral vector.toml:** Para que LogCentral recoja los logs de enjambre, hay que añadir en `/data/logcentral/vector/vector.toml`:
