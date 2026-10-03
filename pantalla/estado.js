@@ -1,0 +1,183 @@
+export const ROLES = ["cartografo", "despiezador", "lector-de-pieza", "trazador", "redactor", "verificador", "novato"];
+
+export function inicial() {
+  return {
+    run: null,
+    motivo: null,
+    vuelta: 0,
+    coste: 0,
+    t: null,
+    agentes: {},
+    inventario: [],
+    bitacora: [],
+    loro: null,
+  };
+}
+
+export function aplicar(estado, evento) {
+  // Never mutate the input: use structuredClone to create a deep copy
+  const s = structuredClone(estado);
+
+  // All events update t
+  s.t = evento.t;
+
+  // Add a line to bitacora with format "hh:mm:ss agente texto"
+  const addBitacora = (text) => {
+    if (evento.t) {
+      const time = evento.t.substring(11, 19); // Extract hh:mm:ss from ISO string
+      const agente = evento.agente || "";
+      const line = `${time} ${agente} ${text}`.trim();
+      s.bitacora.push(line);
+      // Keep only last 50 lines
+      if (s.bitacora.length > 50) {
+        s.bitacora = s.bitacora.slice(-50);
+      }
+    }
+  };
+
+  switch (evento.tipo) {
+    case "run_inicio": {
+      s.run = evento.run;
+      s.bitacora = [];
+      s.agentes = {};
+      s.inventario = [];
+      s.loro = null;
+      s.coste = 0;
+      s.vuelta = 0;
+      s.motivo = null;
+      // Create instances for all ROLES except lector-de-pieza
+      for (const rol of ROLES) {
+        if (rol !== "lector-de-pieza") {
+          s.agentes[rol] = {
+            rol,
+            estado: "esperando",
+            bocadillo: null,
+            modelo_pedido: null,
+            modelo_real: null,
+            duracion_s: null,
+            coste_usd: null,
+          };
+        }
+      }
+      addBitacora(`run iniciado`);
+      break;
+    }
+
+    case "lanzado": {
+      const instancia = evento.agente;
+      const rol = getRol(instancia);
+      s.agentes[instancia] = {
+        rol,
+        estado: "esperando",
+        bocadillo: null,
+        modelo_pedido: evento.modelo_pedido || null,
+        modelo_real: null,
+        duracion_s: null,
+        coste_usd: null,
+      };
+      addBitacora(`lanzado ${instancia}`);
+      break;
+    }
+
+    case "estado": {
+      if (s.agentes[evento.agente]) {
+        s.agentes[evento.agente].estado = evento.estado;
+        if (evento.detalle) {
+          s.agentes[evento.agente].bocadillo = {
+            texto: evento.detalle,
+            t: evento.t,
+          };
+        }
+      }
+      addBitacora(`estado: ${evento.estado}`);
+      break;
+    }
+
+    case "herramienta": {
+      if (s.agentes[evento.agente]) {
+        const texto = `${evento.herramienta} ${evento.detalle || ""}`.trim();
+        s.agentes[evento.agente].bocadillo = {
+          texto,
+          t: evento.t,
+        };
+      }
+      addBitacora(`herramienta: ${evento.herramienta}`);
+      break;
+    }
+
+    case "denegado": {
+      s.loro = {
+        agente: evento.agente,
+        motivo: evento.motivo || "",
+        t: evento.t,
+      };
+      addBitacora(`denegado: ${evento.herramienta}`);
+      break;
+    }
+
+    case "fichero": {
+      // Add to inventario if not already present (no duplicates by ruta)
+      if (!s.inventario.find(i => i.ruta === evento.ruta)) {
+        s.inventario.push({
+          ruta: evento.ruta,
+          agente: evento.agente,
+          t: evento.t,
+        });
+      }
+      addBitacora(`fichero: ${evento.ruta}`);
+      break;
+    }
+
+    case "fin_agente": {
+      if (s.agentes[evento.agente]) {
+        s.agentes[evento.agente].modelo_real = evento.modelo_real || null;
+        s.agentes[evento.agente].duracion_s = evento.duracion_s || null;
+        s.agentes[evento.agente].coste_usd = evento.coste_usd || null;
+        // Add to total coste
+        if (typeof evento.coste_usd === "number") {
+          s.coste += evento.coste_usd;
+        }
+      }
+      addBitacora(`fin: ${evento.agente}`);
+      break;
+    }
+
+    case "vuelta": {
+      s.vuelta = evento.n;
+      addBitacora(`vuelta ${evento.n}`);
+      break;
+    }
+
+    case "run_fin": {
+      s.motivo = evento.motivo || null;
+      addBitacora(`run terminado: ${evento.motivo}`);
+      break;
+    }
+
+    case "respuesta": {
+      addBitacora(`respuesta: ${evento.texto}`);
+      break;
+    }
+
+    case "aviso": {
+      addBitacora(`aviso: ${evento.texto}`);
+      break;
+    }
+
+    default:
+      // Unknown event type: only update t (compatibility rule)
+      addBitacora(`evento desconocido: ${evento.tipo}`);
+      break;
+  }
+
+  return s;
+}
+
+// Helper: extract role from instance name (part before ':')
+function getRol(instancia) {
+  const colonIndex = instancia.indexOf(":");
+  if (colonIndex !== -1) {
+    return instancia.substring(0, colonIndex);
+  }
+  return instancia;
+}

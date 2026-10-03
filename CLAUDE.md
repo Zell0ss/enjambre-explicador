@@ -9,6 +9,7 @@ Orquestador Python que lanza 7 agentes Claude vía Claude Agent SDK, más una pa
 ```bash
 # Tests
 .venv/bin/pytest -v
+node --test tests/js/*.mjs
 
 # Ejecutar orquestador sobre un repo (desarrollo con repo fake/test)
 python -m enjambre.orquestar --repo <ruta> [--falso]
