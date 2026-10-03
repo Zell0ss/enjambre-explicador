@@ -319,16 +319,30 @@ async def orquestar(
     return fin
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI: `python -m enjambre.orquestar --repo <ruta> [--falso]`."""
+def _crear_analizador() -> argparse.ArgumentParser:
+    """Construye el `ArgumentParser` de la CLI.
+
+    Factorizado fuera de `main()` para poder inspeccionar el default de
+    `--salidas` en pruebas sin invocar una orquestación real.
+    """
     analizador = argparse.ArgumentParser(prog="python -m enjambre.orquestar")
     analizador.add_argument("--repo", required=True, type=Path)
-    analizador.add_argument("--salidas", type=Path, default=Path("salidas"))
+    # Absoluto y relativo a este fichero (no al cwd): invocar el módulo desde
+    # fuera de la raíz del repo no debe desviar las salidas a <cwd>/salidas.
+    # parent = enjambre/, parent.parent = raíz del repo.
+    analizador.add_argument(
+        "--salidas", type=Path, default=Path(__file__).resolve().parent.parent / "salidas"
+    )
     analizador.add_argument("--tope-usd", type=float, default=5.0)
     analizador.add_argument("--max-vueltas", type=int, default=2)
     analizador.add_argument("--timeout", type=float, default=600.0)
     analizador.add_argument("--falso", action="store_true")
-    args = analizador.parse_args(argv)
+    return analizador
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI: `python -m enjambre.orquestar --repo <ruta> [--falso]`."""
+    args = _crear_analizador().parse_args(argv)
 
     if args.falso:
         # Modo de demo/desarrollo: cero llamadas a la API, cero tokens.

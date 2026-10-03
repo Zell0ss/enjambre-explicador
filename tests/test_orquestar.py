@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import enjambre.orquestar as orquestar_mod
 from enjambre.falso import hacer_lanzar_falso
 from enjambre.orquestar import orquestar
 from enjambre.tipos import Resultado
@@ -189,3 +190,32 @@ async def test_excepcion_en_lanzar_emite_aviso(repo, tmp_path):
     assert len(avisos) == 1
     assert avisos[0]["agente"] == "lector-de-pieza:a-uno"
     assert avisos[0]["texto"] == "RuntimeError: boom"
+
+
+# --- Patch B: --salidas por defecto, y guion con entradas asíncronas -------
+
+
+def test_salidas_por_defecto_es_absoluta_y_no_depende_del_cwd(monkeypatch, tmp_path):
+    """El default de `--salidas` debe calcularse desde la ubicación del propio
+    módulo (`enjambre/orquestar.py`), no desde el cwd del proceso -- si no,
+    invocar `python -m enjambre.orquestar` desde fuera del repo escribiría en
+    <cwd>/salidas en vez de en <repo>/salidas."""
+    monkeypatch.chdir(tmp_path)  # cwd distinto de la raíz del repo
+    analizador = orquestar_mod._crear_analizador()
+    esperado = Path(orquestar_mod.__file__).resolve().parent.parent / "salidas"
+    assert analizador.get_default("salidas") == esperado
+    assert analizador.parse_args(["--repo", "x"]).salidas == esperado
+
+
+async def test_guion_con_entrada_asincrona(repo, tmp_path):
+    """D-pendiente (patch B): una entrada de guion puede ser `async def` (o
+    cualquier callable cuya llamada devuelva un awaitable), no solo sync."""
+
+    async def _verificador_async(agente, instancia, encargo, ctx):
+        await asyncio.sleep(0)
+        (ctx.salida / "verificacion.md").write_text("## Resultado\n- Fallos: 0\n")
+        return Resultado("terminado", coste_usd=0.01)
+
+    lanzar = hacer_lanzar_falso({"verificador": [_verificador_async]})
+    fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin["motivo"] == "aprobado" and fin["vueltas"] == 1

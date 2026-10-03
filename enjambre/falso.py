@@ -15,9 +15,17 @@ consumen por orden de llamada (`.pop(0)`). Al agotarse la lista de una
 instancia, sus llamadas siguientes caen de vuelta al comportamiento de pega
 por defecto: el guion solo sustituye un PREFIJO de las llamadas de esa
 instancia, no todas para siempre.
+
+Una entrada-función puede ser síncrona o `async def` (o cualquier callable
+cuya llamada devuelva un awaitable): se llama igual en los dos casos y, si lo
+que devuelve es awaitable, se espera antes de usarlo como `Resultado` -- una
+entrada de guion de prueba puede así ejercitar una ruta `await` real (p.ej.
+`asyncio.sleep`) sin que eso cambie en nada el caso de una `Resultado` suelta,
+que nunca se llama ni se espera.
 """
 
 import asyncio
+import inspect
 import time
 from pathlib import Path
 from typing import Callable
@@ -111,9 +119,13 @@ def hacer_lanzar_falso(
             entrada = pendientes.pop(0)
             if isinstance(entrada, Resultado):
                 return entrada
-            # Función (agente, instancia, encargo, ctx) -> Resultado; puede
-            # escribir ficheros distintos de los de pega, o lanzar.
-            return entrada(agente, instancia, encargo, ctx)
+            # Función (agente, instancia, encargo, ctx) -> Resultado, o
+            # -> Awaitable[Resultado] (p.ej. `async def`); puede escribir
+            # ficheros distintos de los de pega, o lanzar.
+            resultado = entrada(agente, instancia, encargo, ctx)
+            if inspect.isawaitable(resultado):
+                resultado = await resultado
+            return resultado
 
         campos = _parse_encargo(encargo)
         inicio = time.monotonic()
