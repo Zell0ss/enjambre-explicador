@@ -292,7 +292,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                     except (BrokenPipeError, ConnectionResetError, OSError):
                         return  # cliente desconectado: cierra sin traza
                     try:
-                        tipo = json.loads(linea).get("tipo")
+                        evento = json.loads(linea)
+                        tipo = evento.get("tipo") if isinstance(evento, dict) else None
                     except json.JSONDecodeError:
                         tipo = None
                     if tipo == "run_fin":

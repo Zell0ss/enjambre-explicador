@@ -137,6 +137,31 @@ def test_directo_tolera_caracter_multibyte_partido(srv):
     assert recibidas[1]["texto"] == "leyó"
 
 
+def test_directo_tolera_linea_json_no_objeto(srv):
+    """Minor (re-revisión de 15b9b3a): mismo fallo que Important 3 pero en el
+    camino del SSE -- una línea JSON válida que no es un objeto (p.ej. una
+    lista) lanzaba AttributeError en `.get("tipo")`, cortando el stream sin
+    llegar a `run_fin`."""
+    base, run = srv
+    recibidas = []
+
+    def leer():
+        with urllib.request.urlopen(base + "/api/directo/agora/r1", timeout=10) as r:
+            for linea in r:
+                if linea.startswith(b"data: "):
+                    recibidas.append(json.loads(linea[6:]))
+
+    h = threading.Thread(target=leer, daemon=True); h.start()
+    time.sleep(0.6)
+    with open(run / "eventos.jsonl", "a") as f:
+        f.write("[1,2,3]\n")
+        f.write('{"t":"y","run":"r1","tipo":"run_fin","motivo":"aprobado"}\n')
+    h.join(timeout=5)
+    assert not h.is_alive()
+    assert recibidas[0]["tipo"] == "run_inicio"
+    assert recibidas[-1]["tipo"] == "run_fin"  # la línea [1,2,3] no tumbó el stream
+
+
 def test_runs_omite_eventos_corrupto_sin_tumbar_la_lista(srv):
     """Important 3 (revisión df61f0d): un `eventos.jsonl` cuya primera línea
     es JSON válido pero no un objeto (una lista), o que tiene bytes UTF-8
