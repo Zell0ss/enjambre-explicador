@@ -74,16 +74,46 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
     """
 
     async def hook(entrada: dict[str, Any], tool_use_id: str | None, contexto: dict) -> dict:
-        tool_name = entrada["tool_name"]
-        tool_input = entrada.get("tool_input", {})
-        ruta = ruta_de(tool_name, tool_input)
+        # Este hook es el único sitio donde el guardia (D8) se conecta al
+        # SDK real. `permitido()` ya falla cerrado por construcción (Tarea 3),
+        # pero el CÓDIGO ALREDEDOR de esa llamada (acceso a `entrada`,
+        # construcción de la ruta `fichero`, el propio `emitir`) no tenía esa
+        # garantía: bajo `permission_mode="bypassPermissions"` (ver
+        # `opciones()`), una excepción sin capturar aquí no se traduce en una
+        # denegación -- el SDK no tiene ninguna decisión que tomar, así que
+        # el permiso por defecto de `bypassPermissions` (aprobar) es lo que
+        # queda, y la tool se ejecutaría SIN que el guardia haya dicho nada.
+        # Es la única frontera de seguridad real de todo el sistema, así que
+        # se envuelve entero: cualquier excepción aquí dentro deniega, igual
+        # que una denegación normal del guardia.
+        try:
+            tool_name = entrada["tool_name"]
+            tool_input = entrada.get("tool_input", {})
+            ruta = ruta_de(tool_name, tool_input)
 
-        # Solo Glob lleva `patron`: es el único hueco de traversal que no pasa
-        # por `ruta_de` (un `pattern` puede escapar del muro aunque `path` no
-        # venga, ver guardia.py). Para el resto, `patron=None` es un no-op.
-        patron = tool_input.get("pattern") if tool_name == "Glob" else None
+            # Solo Glob lleva `patron`: es el único hueco de traversal que no
+            # pasa por `ruta_de` (un `pattern` puede escapar del muro aunque
+            # `path` no venga, ver guardia.py). Para el resto, `patron=None`
+            # es un no-op.
+            patron = tool_input.get("pattern") if tool_name == "Glob" else None
 
-        ok, motivo = permitido(agente.rol, tool_name, ruta, ctx.repo, ctx.salida, patron=patron)
+            ok, motivo = permitido(agente.rol, tool_name, ruta, ctx.repo, ctx.salida, patron=patron)
+
+            if ok and tool_name in ("Write", "Edit") and ruta is not None:
+                resuelta = Path(ruta)
+                if not resuelta.is_absolute():
+                    resuelta = ctx.salida / resuelta
+                ctx.eventos.emitir(
+                    "fichero",
+                    instancia,
+                    ruta=str(resuelta.resolve().relative_to(ctx.salida.resolve())),
+                )
+        except Exception as e:
+            # `entrada["tool_name"]` pudo ser precisamente lo que falló: no
+            # asumir que existe al construir el evento/motivo de esta rama.
+            tool_name = entrada.get("tool_name", "?") if isinstance(entrada, dict) else "?"
+            ok, motivo = False, f"error interno del hook: {type(e).__name__}: {e}"
+            ruta = None
 
         if not ok:
             ctx.eventos.emitir(
@@ -96,14 +126,6 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto):
                     "permissionDecisionReason": motivo,
                 }
             }
-
-        if tool_name in ("Write", "Edit") and ruta is not None:
-            resuelta = Path(ruta)
-            if not resuelta.is_absolute():
-                resuelta = ctx.salida / resuelta
-            ctx.eventos.emitir(
-                "fichero", instancia, ruta=str(resuelta.resolve().relative_to(ctx.salida.resolve()))
-            )
 
         return {}
 
@@ -215,8 +237,14 @@ class Traductor:
 
 
 def _recortar(texto: str) -> str:
-    """Última línea no vacía de `texto`, recortada a `_MAX_RESPUESTA`."""
-    lineas_no_vacias = [l for l in texto.splitlines() if l.strip()]
+    """Última línea no vacía de `texto`, recortada a `_MAX_RESPUESTA`.
+
+    `.strip()` sobre la línea elegida, no solo para decidir si cuenta como
+    "no vacía": sin él, una línea con espacio/tabulación de sobra pero sin
+    contenido visible pasaría el filtro `if l.strip()` y se usaría tal cual,
+    pisando una `respuesta` previa válida con basura en blanco.
+    """
+    lineas_no_vacias = [l.strip() for l in texto.splitlines() if l.strip()]
     ultima = lineas_no_vacias[-1] if lineas_no_vacias else ""
     return ultima[:_MAX_RESPUESTA]
 

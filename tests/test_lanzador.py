@@ -76,6 +76,32 @@ def test_hook_permite_escritura_y_emite_fichero(tmp_path):
     assert f["ruta"] == "mapa.md"
 
 
+def test_hook_excepcion_interna_deniega_no_aprueba_ni_explota(tmp_path):
+    # Entrada malformada (sin "tool_name"): fuerza una excepción DENTRO del
+    # cuerpo del hook, no una denegación normal de `permitido()`. Bajo
+    # permission_mode="bypassPermissions" una excepción sin capturar aquí
+    # dejaría pasar la tool (falla abierto en la única frontera real de
+    # seguridad) -- el hook debe denegar, no reventar ni aprobar.
+    c = ctx(tmp_path)
+    hook = hacer_hook(cargar("novato"), "novato", c)
+    entrada = {"hook_event_name": "PreToolUse",
+               "tool_input": {"file_path": str(c.salida / "articulo.md")}, "tool_use_id": "1"}
+    salida = asyncio.run(hook(entrada, "1", {"signal": None}))
+    assert salida["hookSpecificOutput"]["permissionDecision"] == "deny"
+    [d] = [e for e in leer(c) if e["tipo"] == "denegado"]
+    assert d["agente"] == "novato"
+
+
+def test_traductor_respuesta_se_recorta_de_espacios(tmp_path):
+    # La línea elegida puede venir con espacios de sobra alrededor (no solo
+    # líneas en blanco intercaladas, que ya se filtran): sin `.strip()` sobre
+    # la línea elegida, esos espacios se cuelan tal cual en `respuesta`.
+    c = ctx(tmp_path)
+    t = Traductor("redactor", c)
+    t.procesar(am([TextBlock("primera línea.\n   /s/articulo.md listo   ")]))
+    assert t.resultado().respuesta == "/s/articulo.md listo"
+
+
 def test_opciones(tmp_path):
     c = ctx(tmp_path)
     a = cargar("redactor")
