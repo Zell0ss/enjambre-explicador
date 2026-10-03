@@ -52,6 +52,6 @@ conecte el SDK real:
 1. Nuevo `[sources.enjambre]` con `include = ["/data/enjambre-explicador/logs/enjambre.log"]`
 2. Nuevo `[transforms.parse_enjambre]` copiado de `parse_saxhero` pero con nombre `parse_enjambre`
 3. Añadir `parse_enjambre` a los dos `inputs = [...]` que agregan todos los parse (buscar líneas que agreguen todos los parse)
-4. Reiniciar Vector: `sudo systemctl restart vector`
+4. Reiniciar Vector: `docker compose -f /data/logcentral/vector/docker-compose.yml restart`
 
 Sin esto, `/data/enjambre-explicador/logs/enjambre.log` se crea pero no se indexa en LogCentral.
