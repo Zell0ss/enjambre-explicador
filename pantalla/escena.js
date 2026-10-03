@@ -48,6 +48,11 @@ let _run = null;
 let _zonasAgentes = []; // {x,y,w,h, instancia, agente}
 let _zonasInventario = []; // {x,y,w,h, item}
 
+// Rectángulos de los bocadillos ya dibujados en el fotograma actual
+// (incluido el del loro), para que `_dibujarBocadillo` pueda subir de
+// carril cuando dos agentes muy juntos hablan a la vez -- ver ahí.
+let _bocadillosDibujados = []; // {x1,y1,x2,y2}
+
 // Elementos de cabecera, rellenados una vez en `arrancar`.
 let _cab = null;
 
@@ -157,7 +162,12 @@ const MESA_LARGA_Y = 104;
 
 // Fila de lectores sobre la mesa larga (hasta 8, tope del despiezador; si
 // llegan más se apilan encima, sin rediseñar — §5.3).
-const LECTORES_PASO_X = 18;
+// = ANCHO_PERSONAJE (24): con menos que eso dos lectores contiguos se pisan
+// (el sprite usa casi todo su ancho de 24px -- brazos/herramienta incluidos
+// -- así que cualquier paso menor solapa cuerpos). Visto en captura real
+// contra el servidor (Josem: "lector de piezas están muy juntos"),
+// corregido aquí: antes era 18.
+const LECTORES_PASO_X = ANCHO_PERSONAJE;
 
 function _posicionLector(indice) {
   const i = indice % 8;
@@ -187,6 +197,7 @@ const FAROLES = [
 export function pintar(ctx2d, estado, ahoraMs) {
   _zonasAgentes = [];
   _zonasInventario = [];
+  _bocadillosDibujados = [];
 
   // --- Fondo: cielo, cubierta y mobiliario fijo del barco -----------------
   dibujar(ctx2d, _fotogramaDe(FONDO.cielo, ahoraMs), 0, 0);
@@ -283,11 +294,37 @@ export function pintar(ctx2d, estado, ahoraMs) {
 
 // Bocadillo de diálogo: centrado horizontalmente sobre `cx`, con el pie en
 // `yInferior`, recortado para no salirse del lienzo de 320 de ancho.
+//
+// Con los lectores en fila (hasta 8, separados solo ANCHO_PERSONAJE=24px),
+// sus bocadillos son casi siempre más anchos que la separación entre ellos
+// -- varios a la vez se escribían unos encima de otros (Josem, captura real:
+// "su texto se sobreescribe"). Si el rectángulo candidato choca en x e y con
+// uno ya dibujado este mismo fotograma, sube un carril (una altura de
+// glifo) y reintenta, hasta MAX_CARRILES; si para entonces sigue chocando
+// (muchos lectores hablando literalmente a la vez) se dibuja de todos
+// modos en el último carril probado -- ilegible en el peor caso, pero ya
+// no 100% de las veces como antes, y sin rediseñar el layout de la mesa.
+// 9 carriles cubre el peor caso real: hasta 8 lectores simultáneos (tope
+// documentado en `_posicionLector` antes de apilar) más el bocadillo del
+// loro -- probado con 5 a la vez (4 lectores + loro) a 4 carriles y seguía
+// chocando uno; con 9 cabe de sobra en el cielo del lienzo (banda 0-71,
+// carril 8 queda en y≈3) sin tocar nada más de la escena.
+const PASO_CARRIL = ALTO_GLIFO + 1;
+const MAX_CARRILES = 9;
+
 function _dibujarBocadillo(ctx2d, texto, cx, yInferior, color) {
   if (!texto) return;
   const ancho = medirTexto(texto);
   const x = Math.max(1, Math.min(ANCHO - ancho - 1, Math.round(cx - ancho / 2)));
-  const y = Math.max(0, yInferior - ALTO_GLIFO);
+  let y = Math.max(0, yInferior - ALTO_GLIFO);
+  for (let carril = 1; carril < MAX_CARRILES; carril++) {
+    const choca = _bocadillosDibujados.some(
+      (b) => x < b.x2 && x + ancho > b.x1 && y < b.y2 && y + ALTO_GLIFO > b.y1,
+    );
+    if (!choca || y <= 0) break;
+    y = Math.max(0, y - PASO_CARRIL);
+  }
+  _bocadillosDibujados.push({ x1: x, y1: y, x2: x + ancho, y2: y + ALTO_GLIFO });
   dibujarTexto(ctx2d, texto, x, y, color);
 }
 
