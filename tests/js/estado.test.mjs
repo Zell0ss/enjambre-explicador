@@ -50,3 +50,13 @@ test("la bitácora se queda en 50 líneas", () => {
   const evs = [ev("run_inicio"), ...Array.from({ length: 80 }, (_, i) => ev("aviso", { texto: `a${i}` }))];
   assert.equal(corre(...evs).bitacora.length, 50);
 });
+
+// --- Prueba añadida tras revisión: la regla de compatibilidad para tipos
+// desconocidos es "solo t" -- ni bitácora ni nada más, para que un tipo de
+// evento futuro no contamine la vista con una línea sin sentido.
+test("tipo desconocido no añade línea a la bitácora", () => {
+  const a = corre(ev("run_inicio"));
+  const bitacoraAntes = a.bitacora.length;
+  const b = aplicar(a, ev("tipo_del_futuro", { agente: "x", raro: 1 }));
+  assert.equal(b.bitacora.length, bitacoraAntes);
+});

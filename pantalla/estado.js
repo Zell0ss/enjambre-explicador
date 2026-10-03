@@ -165,8 +165,10 @@ export function aplicar(estado, evento) {
     }
 
     default:
-      // Unknown event type: only update t (compatibility rule)
-      addBitacora(`evento desconocido: ${evento.tipo}`);
+      // Tipo desconocido: la regla de compatibilidad del plan exige que
+      // SOLO se actualice `t` (ya hecho arriba) -- no tocar bitacora ni
+      // nada más, para que un tipo de evento futuro no reviente ni
+      // contamine la vista con una línea sin sentido.
       break;
   }
 
