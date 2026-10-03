@@ -27,7 +27,6 @@ import { inicial, aplicar, ROLES } from "./estado.js";
 // modo repetición como el modo directo (T12) escriben aquí.
 // ---------------------------------------------------------------------------
 let _ctx = null;
-let _lienzo = null;
 let _estado = inicial();
 let _repo = null;
 let _run = null;
@@ -41,7 +40,6 @@ let _zonasInventario = []; // {x,y,w,h, item}
 let _cab = null;
 
 export function arrancar(lienzo, cabecera) {
-  _lienzo = lienzo;
   _ctx = lienzo.getContext("2d");
   _escalarLienzo(lienzo);
   window.addEventListener("resize", () => _escalarLienzo(lienzo));
@@ -146,7 +144,7 @@ const LECTORES_FILA_Y = 70;
 const LECTORES_FILA_X0 = 90;
 const LECTORES_FILA_PASO = 22;
 
-function _posicionAgente(instancia, rol, indiceLector) {
+function _posicionAgente(rol, indiceLector) {
   if (rol === "lector-de-pieza") {
     const i = indiceLector % 8;
     const pila = Math.floor(indiceLector / 8); // apilar si hay más de 8
@@ -181,7 +179,7 @@ export function pintar(ctx2d, estado, ahoraMs) {
   for (const [instancia, agente] of Object.entries(estado.agentes || {})) {
     const rol = agente.rol;
     const indice = rol === "lector-de-pieza" ? indiceLector++ : 0;
-    const pos = _posicionAgente(instancia, rol, indice);
+    const pos = _posicionAgente(rol, indice);
     const w = 18;
     const h = 20;
 
