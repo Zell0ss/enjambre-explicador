@@ -2,7 +2,9 @@
 
 ## Estado
 
-**Tareas 1-11: HECHAS. Fin de H4 — esperando revisión de Josem antes de la Tarea 12.**
+**Tareas 1-12: HECHAS.** Josem revisó H4 ("si, lo he revisado y aunque tengo que afinar el
+look, eso en fase final") y dio luz verde para seguir. Queda la Tarea 13 (Aceptación, H6),
+que lanza Josem.
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
@@ -102,10 +104,35 @@
 
   128/128 Python, 10/10 JS tras todo el pulido.
 
+- **Tarea 12** (modo directo, H5): `pantalla/escena.js` — `_arrancarDirecto(repo, run)` abre
+  un `EventSource` contra `/api/directo/<repo>/<run>` y llama `alimentar(JSON.parse(e.data))`
+  por cada mensaje (sin reloj virtual ni barra: el servidor ya manda los eventos al ritmo
+  real). Controles de repetición ocultos; cabecera "EN DIRECTO" mientras no haya `run_fin`;
+  al llegar, `close()` + enlace a la repetición del mismo run. Si el `EventSource` falla sin
+  `run_fin`: aviso "conexión perdida, reintentando…" + se vacía el estado (el navegador
+  reconecta solo, y el servidor siempre reabre `eventos.jsonl` desde el principio, así que
+  hay que vaciar antes de reaplicar o se duplica todo). Lista de runs: `[directo]` solo para
+  runs sin `motivo` (en marcha).
+
+  **Dos bugs reales encontrados probando esto en un navegador de verdad** (no solo
+  `--falso` rápido: usé un run con retardo largo a propósito para tener margen, más un
+  script CDP que mata y relanza el servidor de pantalla a mitad de run):
+  1. `.controles`/`.zona-lienzo` fijan `display: flex`, que pisa el `[hidden]{display:none}`
+     por defecto del navegador (cascada CSS: una regla de autor siempre gana a la del
+     user-agent) — `controles.hidden = true` no ocultaba nada. Arreglado con una única regla
+     `[hidden] { display: none !important; }` en `index.html`, que de paso corrige el mismo
+     problema latente que tenía `zonaLienzo.hidden` desde la Tarea 10.
+  2. El aviso de "conexión perdida" se quedaba pegado en pantalla aunque ya se hubiera
+     recuperado la conexión — se oculta ahora en cuanto llega el primer mensaje bueno tras
+     reconectar.
+
+  Commit e6d2d4c. 128/128 Python, 10/10 JS (ninguno de los dos tocado).
+
 ## Siguiente
 
-**Fin de H4 — el plan pide parar y pedir revisión antes de la Tarea 12** (modo directo, H5).
-No arrancar la Tarea 12 sin que Josem lo confirme.
+**Fin de H5.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** — no hay más trabajo
+de implementación pendiente del plan de fase 2 por mi parte salvo lo que salga de esa
+aceptación.
 
 ### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 
