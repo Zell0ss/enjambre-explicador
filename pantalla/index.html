@@ -176,13 +176,21 @@
     line-height: 1.25;
   }
   .panel-registro > div {
-    flex: 1 1 260px;
     min-width: 220px;
     background: #1a2230;
     border: 1px solid #333c4a;
     border-radius: 4px;
     padding: 6px 8px;
     box-sizing: border-box;
+  }
+  /* Josem: "la bitacora justo el doble de ancha" -- el doble de hueco que
+     el inventario (2:1 en flex-grow, mismo min-width base para que ninguna
+     de las dos se aplaste por debajo de lo legible al envolver). */
+  .panel-bitacora {
+    flex: 2 1 260px;
+  }
+  .panel-inventario {
+    flex: 1 1 220px;
   }
   .panel-registro h2 {
     margin: 0 0 4px;
@@ -254,11 +262,11 @@
          se repinta el lienzo, con el mismo `estado` -- nunca quedan
          desincronizados entre sí. -->
     <div id="panel-registro" class="panel-registro">
-      <div>
+      <div class="panel-bitacora">
         <h2>Bitácora</h2>
         <ul id="lista-bitacora"></ul>
       </div>
-      <div>
+      <div class="panel-inventario">
         <h2>Inventario</h2>
         <ul id="lista-inventario"></ul>
       </div>
