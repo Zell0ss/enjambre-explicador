@@ -29,6 +29,7 @@ import {
   dibujarTexto,
   medirTexto,
   cargarSpritesPersonajes,
+  cargarFuenteTexto,
 } from "./sprites.js";
 
 // D20: `FONDO` (cielo/cubierta/mástil/mesa larga/farolillos/timón... del
@@ -78,6 +79,13 @@ export async function arrancar(lienzo, cabecera) {
   // (`_arrancarRepeticion`), para que el primer fotograma ya salga con el
   // arte real y no con un parpadeo del procedural de respaldo.
   const cargaSprites = cargarSpritesPersonajes();
+  // Mismo motivo y mismo patrón para VT323 (2026-10-04, sustituye a la
+  // fuente de mapa de bits propia en el lienzo): si `fillText` se usa antes
+  // de que la fuente haya cargado, el navegador pinta con el fallback
+  // `monospace` ESE fotograma y el `<canvas>` no se repinta solo cuando la
+  // fuente llega (a diferencia del HTML normal) -- hay que esperar antes
+  // del primer pintado real, igual que con los sprites.
+  const cargaFuente = cargarFuenteTexto();
 
   _cab = _construirCabecera(cabecera);
   _actualizarCabecera();
@@ -112,12 +120,12 @@ export async function arrancar(lienzo, cabecera) {
   _run = partido.slice(1).join("/") || "";
 
   if (modo === "directo") {
-    await cargaSprites;
+    await Promise.all([cargaSprites, cargaFuente]);
     _arrancarDirecto(_repo, _run);
     return;
   }
 
-  await cargaSprites;
+  await Promise.all([cargaSprites, cargaFuente]);
   _arrancarRepeticion(_repo, _run);
 }
 
@@ -331,17 +339,19 @@ export function pintar(ctx2d, estado, ahoraMs) {
 }
 
 // Ancho máximo de un nombre bajo un personaje (punto 3) -- ver el comentario
-// en el bucle de agentes, más arriba. 34px deja sitio para la mayoría de
-// roles enteros ("cartografo"=60px se recorta a "cartogr." pero
-// "trazador"/"redactor"/"novato" caben enteros) sin que el nombre invada la
-// estación de al lado en los huecos de ~36-40px que separan los puestos del
-// flujo de un solo personaje.
+// en el bucle de agentes, más arriba. Con la fuente de mapa de bits fija de
+// la Tarea 14 (6px/carácter) este tope recortaba casi todos los nombres a
+// 4-5 letras ("desp.", "traz."); con VT323 (2026-10-04, proporcional, más
+// estrecha) el mismo tope de 34px deja bastantes más enteros ("novato") o
+// casi ("cartog.", "verific.") sin tocar el valor -- no ha hecho falta
+// subirlo. Sigue evitando que un nombre invada la estación de al lado en
+// los huecos de ~36-40px que separan los puestos del flujo de un personaje.
 const ANCHO_MAX_NOMBRE = 34;
 
-// Recorte por medida real de la fuente de mapa de bits (igual que el que
-// usaba el inventario dentro del lienzo en la Tarea 11, antes de que D20 lo
-// sacara al panel HTML -- el mismo patrón sigue haciendo falta aquí, para
-// los nombres): añade un "." final mientras no quepa en `anchoMax`.
+// Recorte por medida real del texto (igual que el que usaba el inventario
+// dentro del lienzo en la Tarea 11, antes de que D20 lo sacara al panel
+// HTML -- el mismo patrón sigue haciendo falta aquí, para los nombres):
+// añade un "." final mientras no quepa en `anchoMax`.
 function _recortarTexto(texto, anchoMax) {
   let recortado = String(texto);
   if (medirTexto(recortado) > anchoMax) {

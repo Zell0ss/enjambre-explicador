@@ -589,172 +589,90 @@ export const COLOR_TEXTO = {
 };
 
 // ---------------------------------------------------------------------------
-// Fuente de mapa de bits: 5 píxeles de ancho × 7 de alto. "#" = encendido,
-// "." = apagado -- es un esquema binario propio, no índices de PALETA:
-// dibujarTexto() recibe el color ya resuelto (p.ej. COLOR_TEXTO[rol]) y
-// pinta con él directamente, para poder usar cualquier color sin tener que
-// duplicar cada glifo por color.
+// Texto del lienzo: VT323 (Google Fonts), la misma fuente que ya usa el
+// panel HTML de bitácora/inventario (`index.html`, `.panel-registro`) --
+// Josem, 2026-10-04, sustituyendo la fuente de mapa de bits propia que
+// había aquí (D20 punto 7 y la Tarea de la rejilla 4×6 que no llegó a
+// comitearse): "me lleva a mis tiempos de Spectrum... pero no funciona".
+// `index.html` ya carga la hoja de Google Fonts para VT323 (la usa el panel
+// HTML desde antes); este módulo NO la vuelve a declarar, solo la usa.
 //
-// No hay fila reservada aparte para los acentos: las vocales con tilde y
-// la Ñ/ñ se derivan de la letra base sustituyendo su fila 0 (la mayoría ya
-// la tienen en blanco) por la marca de acento/tilde -- ver _conAcento* más
-// abajo. Es una aproximación tipográfica, no un acento geométricamente
-// exacto, pero mantiene la letra reconocible sin añadir un segundo juego
-// de glifos.
-// ---------------------------------------------------------------------------
+// Por qué esto no es un simple `ctx2d.font = ...` y ya está:
+//   1. VT323 se carga por red. Si se pinta antes de que esté lista, el
+//      navegador usa el fallback (monospace) ESE fotograma, y a diferencia
+//      del HTML normal el `<canvas>` no se repinta solo cuando la fuente
+//      llega -- `cargarFuenteTexto()` (más abajo) expone una promesa que
+//      `escena.js` espera junto a `cargarSpritesPersonajes()` antes del
+//      primer pintado real, mismo patrón que ya usaba para los PNG reales.
+//   2. `fillText` SÍ lleva antialiasing (subpíxeles grises), a diferencia
+//      del `fillRect` de 1×1 de la fuente de mapa de bits -- el lienzo se
+//      escala por CSS con `image-rendering: pixelated`, pensado para arte
+//      sin antialiasing; cómo se ve el resultado está verificado contra el
+//      run real y descrito en el commit, no solo asumido.
+export const FUENTE_TAMANO = 12; // px de ctx2d.font -- elegido a ojo, ver commit
+export const FUENTE_CSS = `${FUENTE_TAMANO}px "VT323", monospace`;
 
-export const ANCHO_GLIFO = 5;
-export const ALTO_GLIFO = 7;
+// `ANCHO_GLIFO`/`ALTO_GLIFO` ya no describen un glifo de mapa de bits fijo
+// (VT323 es proporcional, no monoespaciada) -- se quedan exportadas porque
+// `escena.js` sigue leyendo `ALTO_GLIFO` como alto de línea aproximado, para
+// el salto vertical entre bocadillos que chocan y el alto de su rectángulo
+// de colisión (`_dibujarBocadillo`, `ALTO_GLIFO + 1`). `ANCHO_GLIFO` no la
+// usa nada fuera de este fichero (comprobado); se deja con un valor
+// orientativo por si alguna tarea futura la necesita.
+export const ANCHO_GLIFO = Math.round(FUENTE_TAMANO * 0.6);
+export const ALTO_GLIFO = FUENTE_TAMANO;
 
-const FUENTE_BASE = {
-  " ": [".....", ".....", ".....", ".....", ".....", ".....", "....."],
-  ".": [".....", ".....", ".....", ".....", ".....", ".##..", ".##.."],
-  ",": [".....", ".....", ".....", ".....", ".....", ".##..", ".#..."],
-  ":": [".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."],
-  "/": ["....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."],
-  "-": [".....", ".....", ".....", "#####", ".....", ".....", "....."],
-  $: ["..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."],
-  "(": ["...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."],
-  ")": [".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."],
-  "!": ["..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."],
-  "¡": ["..#..", ".....", "..#..", "..#..", "..#..", "..#..", "..#.."],
-  "?": [".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."],
-  "¿": ["..#..", ".....", "..#..", ".#...", "#....", "#...#", ".###."],
-  0: [".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."],
-  1: ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", "#####"],
-  2: [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
-  3: [".###.", "#...#", "....#", "..##.", "....#", "#...#", ".###."],
-  4: ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
-  5: ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
-  6: ["..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."],
-  7: ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
-  8: [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
-  9: [".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."],
-  A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
-  C: [".####", "#....", "#....", "#....", "#....", "#....", ".####"],
-  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
-  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
-  F: ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
-  G: [".####", "#....", "#....", "#.###", "#...#", "#...#", ".####"],
-  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-  I: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"],
-  J: ["..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."],
-  K: ["#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"],
-  L: ["#....", "#....", "#....", "#....", "#....", "#....", "#####"],
-  M: ["#...#", "##.##", "#.#.#", "#...#", "#...#", "#...#", "#...#"],
-  N: ["#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"],
-  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  P: ["####.", "#...#", "#...#", "####.", "#....", "#....", "#...."],
-  Q: [".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"],
-  R: ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"],
-  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
-  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
-  U: ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  V: ["#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
-  W: ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"],
-  X: ["#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"],
-  Y: ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
-  Z: ["#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"],
-  a: [".....", ".....", ".###.", "....#", ".####", "#...#", ".####"],
-  b: ["#....", "#....", "#.##.", "##..#", "#...#", "#...#", "####."],
-  c: [".....", ".....", ".####", "#....", "#....", "#....", ".####"],
-  d: ["....#", "....#", ".##.#", "#..##", "#...#", "#...#", ".####"],
-  e: [".....", ".....", ".###.", "#...#", "#####", "#....", ".###."],
-  f: ["..##.", ".#..#", ".#...", "###..", ".#...", ".#...", ".#..."],
-  g: [".....", ".####", "#...#", "#...#", ".####", "....#", ".###."],
-  h: ["#....", "#....", "#.##.", "##..#", "#...#", "#...#", "#...#"],
-  i: ["..#..", ".....", ".##..", "..#..", "..#..", "..#..", ".###."],
-  j: ["...#.", ".....", "..##.", "...#.", "...#.", "#..#.", ".##.."],
-  k: ["#....", "#....", "#..#.", "#.#..", "##...", "#.#..", "#..#."],
-  l: [".##..", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
-  m: [".....", ".....", "##.#.", "#.#.#", "#.#.#", "#...#", "#...#"],
-  n: [".....", ".....", "#.##.", "##..#", "#...#", "#...#", "#...#"],
-  o: [".....", ".....", ".###.", "#...#", "#...#", "#...#", ".###."],
-  // D20 punto 7: la fila 1 dibujaba literalmente la "P" mayúscula (".####",
-  // bombo abierto a la izquierda) en vez de cerrar el bombo de la "p" por la
-  // izquierda como hacen las filas 4-6 (el tallo descendente, ya correcto).
-  // Verificado a mano contra "q" (bombo abierto a ambos lados en las mismas
-  // filas, tallo a la derecha): confirma que aquí el bombo debía cerrarse a
-  // la izquierda desde la fila 1, no solo desde la 4. Único cambio: esa fila.
-  p: [".....", "####.", "#...#", "#...#", "####.", "#....", "#...."],
-  q: [".....", ".####", "#...#", "#...#", ".####", "....#", "....#"],
-  r: [".....", ".....", "#.##.", "##..#", "#....", "#....", "#...."],
-  s: [".....", ".....", ".####", "#....", ".###.", "....#", "####."],
-  t: ["..#..", "..#..", "#####", "..#..", "..#..", "..#..", "...##"],
-  u: [".....", ".....", "#...#", "#...#", "#...#", "#...#", ".####"],
-  v: [".....", ".....", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
-  w: [".....", ".....", "#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
-  x: [".....", ".....", "#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
-  y: [".....", ".....", "#...#", "#...#", ".####", "....#", ".###."],
-  z: [".....", ".....", "#####", "...#.", "..#..", ".#...", "#####"],
-};
+// Contexto de un `<canvas>` interno, nunca insertado en el DOM, solo para
+// medir texto (`measureText`) con la misma fuente que se pinta -- creado y
+// cacheado la primera vez que hace falta, no en cada llamada a
+// `medirTexto`. El canvas real que sí se pinta (`dibujarTexto`) pone su
+// propio `ctx2d.font` en cada llamada porque es compartido con el resto del
+// dibujo del lienzo (personajes, loro...) y no se puede asumir que nadie
+// más lo haya tocado entre medias.
+let _ctxMedida = null;
 
-function _conAcento(glifo) {
-  // Mayúscula acentuada: añade una marca en la esquina sup. derecha de la
-  // fila 0 (aproximación, no un acento geométrico exacto -- ver comentario
-  // de cabecera).
-  const copia = glifo.slice();
-  const fila = copia[0].split("");
-  fila[4] = "#";
-  copia[0] = fila.join("");
-  return copia;
+function _ctxDeMedida() {
+  if (!_ctxMedida) {
+    _ctxMedida = document.createElement("canvas").getContext("2d");
+  }
+  _ctxMedida.font = FUENTE_CSS;
+  return _ctxMedida;
 }
-
-function _conAcentoMin(glifo) {
-  // Minúscula acentuada: la fila 0 está libre en todas las vocales
-  // (incluida "i", donde sustituye al punto -- tipográficamente razonable).
-  const copia = glifo.slice();
-  copia[0] = "...#.";
-  return copia;
-}
-
-function _conTilde(glifo) {
-  const copia = glifo.slice();
-  copia[0] = ".#.#.";
-  return copia;
-}
-
-const FUENTE = {
-  ...FUENTE_BASE,
-  Á: _conAcento(FUENTE_BASE.A),
-  É: _conAcento(FUENTE_BASE.E),
-  Í: _conAcento(FUENTE_BASE.I),
-  Ó: _conAcento(FUENTE_BASE.O),
-  Ú: _conAcento(FUENTE_BASE.U),
-  á: _conAcentoMin(FUENTE_BASE.a),
-  é: _conAcentoMin(FUENTE_BASE.e),
-  í: _conAcentoMin(FUENTE_BASE.i),
-  ó: _conAcentoMin(FUENTE_BASE.o),
-  ú: _conAcentoMin(FUENTE_BASE.u),
-  Ñ: _conTilde(FUENTE_BASE.N),
-  ñ: _conTilde(FUENTE_BASE.n),
-};
 
 /**
- * dibujarTexto(ctx2d, texto, x, y, color) — pinta `texto` con la fuente de
- * mapa de bits de arriba. Un carácter sin glifo (emoji, acento raro) cae en
- * "?" en vez de lanzar una excepción.
+ * cargarFuenteTexto() — pide a `document.fonts` que cargue VT323 al tamaño
+ * de `FUENTE_CSS` y espera a `document.fonts.ready`. Se resuelve siempre
+ * (nunca se rechaza): si la carga falla (red, API ausente en un entorno de
+ * pruebas), `dibujarTexto` simplemente pintará con el fallback `monospace`
+ * de `FUENTE_CSS` -- degradación silenciosa, mismo criterio que el resto
+ * del proyecto (ver `cargarSpritesPersonajes`, arriba).
+ */
+export function cargarFuenteTexto() {
+  if (typeof document === "undefined" || !document.fonts) return Promise.resolve();
+  return document.fonts
+    .load(FUENTE_CSS)
+    .then(() => document.fonts.ready)
+    .catch(() => {});
+}
+
+/**
+ * dibujarTexto(ctx2d, texto, x, y, color) — pinta `texto` con VT323. `(x,y)`
+ * sigue siendo la esquina superior izquierda del texto (mismo contrato que
+ * la fuente de mapa de bits que sustituye, por eso `textBaseline = "top"`):
+ * los dos llamadores reales en `escena.js` (nombre bajo el personaje,
+ * bocadillo) no necesitan cambiar nada.
  */
 export function dibujarTexto(ctx2d, texto, x, y, color) {
   if (!texto) return;
+  ctx2d.font = FUENTE_CSS;
+  ctx2d.textBaseline = "top";
+  ctx2d.textAlign = "left";
   ctx2d.fillStyle = color;
-  let cx = x;
-  for (const ch of String(texto)) {
-    const glifo = FUENTE[ch] || FUENTE["?"];
-    if (glifo) {
-      for (let fila = 0; fila < glifo.length; fila++) {
-        const cadena = glifo[fila];
-        for (let col = 0; col < cadena.length; col++) {
-          if (cadena[col] === "#") ctx2d.fillRect(cx + col, y + fila, 1, 1);
-        }
-      }
-    }
-    cx += ANCHO_GLIFO + 1;
-  }
+  ctx2d.fillText(String(texto), x, y);
 }
 
 /** Ancho en píxeles que ocupará `texto` pintado con dibujarTexto(). */
 export function medirTexto(texto) {
-  return String(texto || "").length * (ANCHO_GLIFO + 1);
+  if (!texto) return 0;
+  return _ctxDeMedida().measureText(String(texto)).width;
 }
