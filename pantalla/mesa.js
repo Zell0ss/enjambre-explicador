@@ -508,8 +508,10 @@ function _pintarPuerta(key, n, ultimo, ahoraMs, descripcion, esVerificador) {
   div.classList.toggle("puerta--roja", encendida && !esVerificador);
   div.classList.toggle("puerta--ambar", encendida && esVerificador);
 
+  // Retoque Tarea 16 (3): encendida o no, el contador "n=" se ve siempre --
+  // antes, al encenderse, el texto del último denegado lo sustituía entero.
   if (estadoEl) {
-    estadoEl.textContent = encendida ? `${ultimo.texto} — ${ultimo.motivo}` : `n=${n}`;
+    estadoEl.textContent = encendida ? `n=${n} · ${ultimo.texto} — ${ultimo.motivo}` : `n=${n}`;
   }
 }
 
@@ -626,6 +628,15 @@ function _lineaElbow(x1, y1, x2, y2, midX, tipo) {
   return `<path d="M${x1},${y1} L${midX},${y1} L${midX},${y2} L${x2},${y2}" class="${clase}" marker-end="url(#${marca})" />`;
 }
 
+// "vuelta n/max" -- un solo sitio decide cómo se lee una vuelta; lo usan
+// tanto la etiqueta de la flecha (abajo) como la cabecera
+// (`_actualizarCabecera`).
+function _etiquetaVuelta(estado) {
+  const vuelta = estado.vuelta > 0 ? String(estado.vuelta) : "—";
+  const maxV = typeof estado.max_vueltas === "number" ? String(estado.max_vueltas) : "?";
+  return `vuelta ${vuelta}/${maxV}`;
+}
+
 function _recalcularFlechas(estado) {
   const svg = document.getElementById("flechas");
   if (!svg) return;
@@ -646,18 +657,36 @@ function _recalcularFlechas(estado) {
   svg.setAttribute("height", g.mesa.h);
   svg.setAttribute("viewBox", `0 0 ${g.mesa.w} ${g.mesa.h}`);
 
-  const vuelta = estado.vuelta > 0 ? String(estado.vuelta) : "—";
-  const maxV = typeof estado.max_vueltas === "number" ? String(estado.max_vueltas) : "?";
-  const etiquetaVuelta = `vuelta ${vuelta}/${maxV}`;
+  const etiquetaVuelta = _etiquetaVuelta(estado);
 
   const midLectTraz = (g.lect.right + g.traz.x) / 2;
-  // Las dos columnas de "ida" (redactor->verificador, redactor->novato) y
-  // "vuelta" (verificador->redactor, novato->redactor) comparten el mismo
-  // hueco entre columna 3 y 4 -- offset de 6px entre una y otra para que no
-  // se dibujen exactamente encima (visible en una franja tan estrecha).
-  const midIda = (g.red.right + g.ver.x) / 2 - 6;
-  const midVuelta = (g.red.right + g.ver.x) / 2 + 6;
-  // Igual que arriba, offsets de ALTURA distintos sobre el borde derecho de
+
+  // Retoque Tarea 16 (1): la "y" de despiezador->lectores tiene que caer
+  // DENTRO de la tarjeta de lectores -- el centro de despiezador acotado a
+  // [lect.y+20, lect.bottom-20] (con margen de 20px por cada lado, salvo que
+  // la tarjeta sea tan baja que no quepan los dos); si hay que acotar, la
+  // línea deja de ser recta y pasa a tener codo (mismo patrón que
+  // lectores->trazador, más abajo).
+  const altoLect = g.lect.bottom - g.lect.y;
+  const yDespLect =
+    altoLect > 40 ? Math.min(Math.max(g.desp.cy, g.lect.y + 20), g.lect.bottom - 20) : g.lect.cy;
+  const despLectRecta = Math.abs(yDespLect - g.desp.cy) < 0.5;
+  const midDespLect = (g.desp.right + g.lect.x) / 2;
+
+  // Retoque Tarea 16 (2): CSS (`index.html`, `.mesa`) abre una columna
+  // espaciadora entre la 3 (trazador/redactor) y la 4 (verificador/novato)
+  // para que la etiqueta "vuelta n/max" y los cuatro codos de ida/vuelta
+  // quepan sin pisar ninguna tarjeta -- el ancho real de ese hueco se mide
+  // aquí (nunca un número fijo, D22 punto 1), y los cuatro codos se reparten
+  // dentro de él como fracciones de ese ancho, cada uno a una "x" distinta
+  // para que no se dibujen exactamente encima.
+  const huecoIzq = g.red.right;
+  const anchoHueco = g.ver.x - huecoIzq;
+  const xIdaVer = huecoIzq + anchoHueco * 0.25;
+  const xIdaNov = huecoIzq + anchoHueco * 0.4;
+  const xVueltaVer = huecoIzq + anchoHueco * 0.6;
+  const xVueltaNov = huecoIzq + anchoHueco * 0.75;
+  // Igual que antes, offsets de ALTURA distintos sobre el borde derecho de
   // "redactor" para que la salida hacia verificador, la salida hacia
   // novato, la entrada de la vuelta de verificador y la de la vuelta de
   // novato no se solapen entre sí.
@@ -671,17 +700,22 @@ function _recalcularFlechas(estado) {
   // principal, D22 punto 1: "sin flecha cartógrafo->lectores", por eso no
   // hay ninguna línea directa entre esos dos).
   partes.push(_lineaRecta(g.cart.cx, g.cart.bottom, g.desp.cx, g.desp.y, "ida"));
-  partes.push(_lineaRecta(g.desp.right, g.desp.cy, g.lect.x, g.desp.cy, "ida"));
+  if (despLectRecta) {
+    partes.push(_lineaRecta(g.desp.right, g.desp.cy, g.lect.x, yDespLect, "ida"));
+  } else {
+    partes.push(_lineaElbow(g.desp.right, g.desp.cy, g.lect.x, yDespLect, midDespLect, "ida"));
+  }
   partes.push(_lineaElbow(g.lect.right, g.lect.cy, g.traz.x, g.traz.cy, midLectTraz, "ida"));
   partes.push(_lineaRecta(g.traz.cx, g.traz.bottom, g.red.cx, g.red.y, "ida"));
-  // redactor -> verificador y redactor -> novato.
-  partes.push(_lineaElbow(g.red.right, yIdaVer, g.ver.x, g.ver.cy, midIda, "ida"));
-  partes.push(_lineaRecta(g.red.right, yIdaNov, g.nov.x, g.nov.cy, "ida"));
+  // redactor -> verificador y redactor -> novato: las dos con codo (retoque
+  // Tarea 16 (2) -- "nada de diagonales", novato incluido).
+  partes.push(_lineaElbow(g.red.right, yIdaVer, g.ver.x, g.ver.cy, xIdaVer, "ida"));
+  partes.push(_lineaElbow(g.red.right, yIdaNov, g.nov.x, g.nov.cy, xIdaNov, "ida"));
   // La vuelta de los dos al redactor, rotulada "vuelta n/max".
-  partes.push(_lineaElbow(g.ver.x, g.ver.cy, g.red.right, yVueltaVer, midVuelta, "vuelta"));
-  partes.push(_lineaElbow(g.nov.x, g.nov.cy, g.red.right, yVueltaNov, midVuelta, "vuelta"));
+  partes.push(_lineaElbow(g.ver.x, g.ver.cy, g.red.right, yVueltaVer, xVueltaVer, "vuelta"));
+  partes.push(_lineaElbow(g.nov.x, g.nov.cy, g.red.right, yVueltaNov, xVueltaNov, "vuelta"));
 
-  const xEtiqueta = midVuelta + 4;
+  const xEtiqueta = huecoIzq + anchoHueco * 0.5;
   const yEtiqueta = (yVueltaVer + yVueltaNov) / 2;
   partes.push(
     `<text x="${xEtiqueta}" y="${yEtiqueta}" class="etiqueta-vuelta" text-anchor="middle">${etiquetaVuelta}</text>`,
@@ -696,9 +730,12 @@ function _recalcularFlechas(estado) {
 // ---------------------------------------------------------------------------
 
 function _construirCabecera(cabecera) {
+  // D22 (retoque Tarea 16 (4)): "vuelta" ya forma parte del propio texto que
+  // pone `_etiquetaVuelta` ("vuelta n/max") -- sin rótulo fijo delante, para
+  // no duplicar la palabra.
   cabecera.innerHTML =
     '<span class="campo">run <strong id="c-run">—</strong></span>' +
-    '<span class="campo">vuelta <strong id="c-vuelta">—</strong></span>' +
+    '<span class="campo"><strong id="c-vuelta">vuelta —/?</strong></span>' +
     '<span class="campo">coste <strong id="c-coste">—</strong></span>' +
     '<span class="campo">reloj <strong id="c-reloj">—</strong></span>' +
     '<span class="campo">motivo <strong id="c-motivo">—</strong></span>';
@@ -714,7 +751,8 @@ function _construirCabecera(cabecera) {
 function _actualizarCabecera(motivoForzado) {
   if (!_cab) return;
   _cab.run.textContent = _estado.run || "—";
-  _cab.vuelta.textContent = String(_estado.vuelta ?? "—");
+  // Retoque Tarea 16 (4): "vuelta n/max" ("vuelta —/2" antes de la primera).
+  _cab.vuelta.textContent = _etiquetaVuelta(_estado);
   _cab.coste.textContent = typeof _estado.coste === "number" ? `$${_estado.coste.toFixed(4)}` : "—";
   _cab.reloj.textContent = _estado.t ? _estado.t.substring(11, 19) : "—";
   _cab.motivo.textContent = motivoForzado || _estado.motivo || "—";
