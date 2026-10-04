@@ -179,6 +179,21 @@ def test_directo_tolera_linea_json_no_objeto(srv):
     assert recibidas[-1]["tipo"] == "run_fin"  # la línea [1,2,3] no tumbó el stream
 
 
+def test_directo_de_un_run_inexistente_es_404_rapido(srv):
+    """Anexo 2026-10-04 (2), Tarea 16: la espera de hasta 30s en
+    `_servir_directo` (Tarea 15) solo tiene sentido para el run que este
+    servidor acaba de lanzar él mismo (`proc_repo`/`proc_run`) -- aquí no se
+    ha lanzado nada, así que un run que no existe tiene que dar 404 ya, no
+    30s después."""
+    base, _ = srv
+    inicio = time.monotonic()
+    with pytest.raises(urllib.error.HTTPError) as e:
+        get(base + "/api/directo/agora/no-existe-de-verdad")
+    transcurrido = time.monotonic() - inicio
+    assert e.value.code == 404
+    assert transcurrido < 1.0
+
+
 def test_runs_omite_eventos_corrupto_sin_tumbar_la_lista(srv):
     """Important 3 (revisión df61f0d): un `eventos.jsonl` cuya primera línea
     es JSON válido pero no un objeto (una lista), o que tiene bytes UTF-8

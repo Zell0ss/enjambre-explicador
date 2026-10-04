@@ -464,8 +464,20 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         haya creado siquiera el directorio o escrito la primera línea. Se
         sondea hasta 30s (ni el directorio ni el fichero tienen por qué
         existir todavía) en vez de dar 404 al primer intento, para no perder
-        esa carrera contra el propio subproceso que acabamos de lanzar."""
-        plazo = time.monotonic() + 30
+        esa carrera contra el propio subproceso que acabamos de lanzar.
+
+        Retoque del anexo 2026-10-04 (2), Tarea 16: esa espera de 30s SOLO
+        tiene sentido para el run que este servidor acaba de lanzar -- para
+        cualquier otro (repo, run) que de verdad no existe -- una URL mal
+        tecleada, un run antiguo borrado, un intento de sondeo a ciegas --
+        no hay ningún subproceso en camino que vaya a crear el fichero, así
+        que esperar 30s solo retrasaría un 404 que ya se sabe seguro desde
+        el principio. Comparar contra `proc_repo`/`proc_run` (el último
+        lanzado, puesto por `_lanzar`) decide cuál es cuál."""
+        es_el_ultimo_lanzado = (
+            repo == self.server.proc_repo and run == self.server.proc_run  # type: ignore[attr-defined]
+        )
+        plazo = time.monotonic() + (30 if es_el_ultimo_lanzado else 0)
         eventos_path = None
         while True:
             run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
