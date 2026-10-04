@@ -56,6 +56,41 @@ async def test_encargos_sin_repo_para_redactor_y_novato(repo, tmp_path):
     assert "REPO=" in enc["verificador"] and "PIEZA=b-dos" in enc["lector-de-pieza:b-dos"]
 
 
+async def test_falso_ejercita_la_mesa_de_papeles(repo, tmp_path):
+    """Anexo 2026-10-04 (2), Tarea 16, Paso 3: --falso (sin guion, el
+    comportamiento de pega por defecto) tiene que ejercitar lecturas/
+    puertas/saltos de la mesa de papeles, no quedarse en el "Read encargo"
+    fijo de siempre -- adapta la fixture de
+    `test_orden_y_aprobado_en_la_primera_vuelta`, no la intención."""
+    await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+    evs = eventos(tmp_path / "s")
+    salida = str(tmp_path / "s" / "agora" / "r1")
+
+    lee_redactor = [
+        e
+        for e in evs
+        if e["tipo"] == "herramienta" and e["agente"] == "redactor" and e["herramienta"] == "Read"
+    ]
+    assert any(
+        e["detalle"].startswith(salida) and e["detalle"].endswith(".md") and "/fichas/" in e["detalle"]
+        for e in lee_redactor
+    )
+
+    denegados = [e for e in evs if e["tipo"] == "denegado"]
+    assert any(e["agente"] == "redactor" for e in denegados)
+    assert any(e["agente"] == "novato" for e in denegados)
+
+    globs = [e for e in evs if e["tipo"] == "herramienta" and e["herramienta"] == "Glob"]
+    assert any("patron" in e for e in globs)
+
+    # El verificador nunca lee fichas en la demo: cualquier Read suyo que
+    # caiga dentro de la salida tiene que ser articulo.md, nunca otra cosa.
+    for e in evs:
+        if e["tipo"] == "herramienta" and e["agente"] == "verificador" and e["herramienta"] == "Read":
+            if e["detalle"].startswith(salida):
+                assert e["detalle"].endswith("articulo.md")
+
+
 _LINEA_SALIDA_D18 = (
     "Tu directorio de trabajo ya es SALIDA: donde tus instrucciones dicen SALIDA/x, usa x o la ruta absoluta."
 )

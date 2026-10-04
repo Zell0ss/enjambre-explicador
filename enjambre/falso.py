@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from enjambre.parsers import SalidaIlegible, ids_de_piezas
 from enjambre.tipos import Contexto, Lanzar, Resultado
 
 
@@ -102,6 +103,91 @@ def _escribir_de_pega(rol: str, campos: dict[str, str], ctx: Contexto) -> list[P
     raise ValueError(f"hacer_lanzar_falso: rol desconocido '{rol}'")
 
 
+# D22 (Tarea 16, anexo 2026-10-04 (2)): roles con acceso al repo -- cartógrafo
+# (lo mapea), despiezador (lo trocea en piezas), lector-de-pieza (lee la suya)
+# y trazador (traza flujos por el código). redactor/verificador/novato NO
+# -- D2 ("el redactor no ve el repo"; verificador y novato no lo necesitan
+# para su trabajo, solo ven la salida). Decisión propia: el plan dice
+# "los agentes con repo leen uno o dos ficheros del repo" sin enumerar
+# cuáles son "los agentes con repo" -- se interpreta como los cuatro de
+# arriba, consistentes con quién tiene REPO en su encargo real
+# (`orquestar._encargo`, D2: "al redactor y al novato no se les pasa REPO").
+_ROLES_CON_REPO = {"cartografo", "despiezador", "lector-de-pieza", "trazador"}
+
+
+def _lecturas_de_pega(rol: str, campos: dict[str, str], ctx: Contexto) -> list[Path]:
+    """D22: qué lee cada rol en la demo --falso, de la salida y del repo si
+    le toca, antes de ponerse a escribir -- para que la mesa de papeles
+    tenga lecturas por agente, papel que se enciende y puertas que enseñar,
+    y no se quede en el "Read encargo" fijo de siempre. Rutas ABSOLUTAS en
+    cada caso (igual que emitiría el `lanzar` real, D17): relativizarlas
+    para mostrarlas es cosa del reductor del lado de la pantalla, no de
+    aquí."""
+    salida, repo = ctx.salida, ctx.repo
+    lecturas: list[Path] = []
+
+    if rol == "despiezador":
+        lecturas.append(salida / "mapa.md")
+    elif rol == "lector-de-pieza":
+        lecturas.append(salida / "piezas.md")
+    elif rol in ("trazador", "redactor"):
+        # Todas las fichas que el despiezador ya decidió y los lectores ya
+        # escribieron -- se leen de piezas.md de verdad, no de una lista
+        # hardcodeada aquí, para que un guion de prueba que cambie las
+        # piezas (otros ids, menos o más lectores) se refleje también aquí.
+        piezas_path = salida / "piezas.md"
+        if piezas_path.exists():
+            try:
+                ids = ids_de_piezas(piezas_path.read_text())
+            except SalidaIlegible:
+                ids = []
+            for id_ in ids:
+                ficha = salida / "fichas" / f"{id_}.md"
+                if ficha.exists():
+                    lecturas.append(ficha)
+    elif rol in ("verificador", "novato"):
+        # "El verificador nunca lee fichas, así que en la demo la puerta del
+        # prompt se queda en 0" (Paso 3) -- por eso NO hay una rama que le dé
+        # fichas aquí, a diferencia de trazador/redactor arriba.
+        lecturas.append(salida / "articulo.md")
+
+    if rol in _ROLES_CON_REPO:
+        lecturas.append(repo / "README.md")
+
+    return lecturas
+
+
+def _denegado_de_pega(rol: str, campos: dict[str, str], ctx: Contexto, instancia: str) -> None:
+    """D22: en la primera vuelta, el redactor y el novato "intentan" leer
+    algo fuera de su muro -- puro teatro para que la demo --falso enseñe
+    las puertas del guardia encendidas al menos una vez. Emite el evento
+    `denegado` directamente, SIN pasar por `guardia.permitido()`: esto no es
+    el lanzador real (D6/D8 no aplican a este módulo, D6 dice explícitamente
+    que todo el acceso al SDK -- y el guardia real cuelga del hook del
+    lanzador real -- vive detrás de `lanzar()`), así que no hay ningún
+    guardia de verdad al que consultar aquí. El comentario es la advertencia:
+    estos `denegado` no demuestran que el muro funcione, solo que la vista
+    sabe pintarlo."""
+    if rol == "redactor" and campos.get("MODO") == "borrador":
+        intento = ctx.repo / "backend" / "servicio.py"
+        ctx.eventos.emitir(
+            "denegado",
+            instancia,
+            herramienta="Read",
+            detalle=str(intento),
+            motivo="el redactor no ve el repo (D2) -- teatro de demo, --falso",
+        )
+    elif rol == "novato" and campos.get("VUELTA") == "1":
+        intento = ctx.salida / "fichas" / "a-uno.md"
+        ctx.eventos.emitir(
+            "denegado",
+            instancia,
+            herramienta="Read",
+            detalle=str(intento),
+            motivo="el novato solo ve articulo.md y dudas.md (D2) -- teatro de demo, --falso",
+        )
+
+
 def hacer_lanzar_falso(
     guion: "dict[str, list[Resultado | Callable]] | None" = None,
     retardo_s: float = 0.0,
@@ -132,6 +218,24 @@ def hacer_lanzar_falso(
 
         ctx.eventos.emitir("estado", instancia, estado="leyendo", detalle="encargo")
         ctx.eventos.emitir("herramienta", instancia, herramienta="Read", detalle="encargo")
+
+        # D22 (Tarea 16): lecturas de verdad de la salida/repo (más abajo que
+        # el "Read encargo" fijo de siempre) + el Glob con patrón del
+        # cartógrafo (D23) + el teatro de denegados de redactor/novato en su
+        # primera vuelta -- todo dentro de la misma fase "leyendo", sin
+        # sleeps nuevos, para no alargar la demo.
+        lecturas_extra = _lecturas_de_pega(agente.rol, campos, ctx)
+        for ruta_leida in lecturas_extra:
+            ctx.eventos.emitir("herramienta", instancia, herramienta="Read", detalle=str(ruta_leida))
+        if agente.rol == "cartografo":
+            # D23: en el run real, la mitad de los Glob del cartógrafo
+            # decían solo la ruta del repo -- aquí se emite ya con patrón,
+            # para que la demo enseñe el campo nuevo desde el principio.
+            ctx.eventos.emitir(
+                "herramienta", instancia, herramienta="Glob", detalle=str(ctx.repo), patron="**/*.py"
+            )
+        _denegado_de_pega(agente.rol, campos, ctx, instancia)
+
         if retardo_s:
             await asyncio.sleep(retardo_s)
 
@@ -145,6 +249,9 @@ def hacer_lanzar_falso(
 
         ctx.eventos.emitir("estado", instancia, estado="terminado")
 
+        num_herramientas = (
+            len(rutas) + 1 + len(lecturas_extra) + (1 if agente.rol == "cartografo" else 0)
+        )
         return Resultado(
             estado_final="terminado",
             respuesta=f"{instancia}: listo (de pega)",
@@ -153,7 +260,7 @@ def hacer_lanzar_falso(
             tokens_in=100,
             tokens_out=50,
             coste_usd=0.01,
-            num_herramientas=len(rutas) + 1,
+            num_herramientas=num_herramientas,
         )
 
     return lanzar
