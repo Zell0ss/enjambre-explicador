@@ -128,6 +128,7 @@ export async function arrancar(mesaEl, cabecera) {
     if (zonaMesa) zonaMesa.hidden = true;
     if (listaRuns) listaRuns.hidden = false;
     if (formLanzar) formLanzar.hidden = false;
+    if (_cab.volver) _cab.volver.hidden = true;
     _cargarListaRuns(listaRuns);
     _instalarFormularioLanzar(formLanzar);
     // Nada que pintar todavía: se deja la mesa en su estado inicial para que
@@ -140,6 +141,10 @@ export async function arrancar(mesaEl, cabecera) {
   if (zonaMesa) zonaMesa.hidden = false;
   if (listaRuns) listaRuns.hidden = true;
   if (formLanzar) formLanzar.hidden = true;
+  // Botón para volver a la portada (lista de runs / formulario de lanzar)
+  // sin tocar la barra de direcciones -- `href="?"` quita `run`/`modo` sin
+  // tocar el resto de la URL (no hay otros parámetros que conservar).
+  if (_cab.volver) _cab.volver.hidden = false;
 
   const partido = run.split("/");
   _repo = partido[0] || "";
@@ -733,13 +738,20 @@ function _construirCabecera(cabecera) {
   // D22 (retoque Tarea 16 (4)): "vuelta" ya forma parte del propio texto que
   // pone `_etiquetaVuelta` ("vuelta n/max") -- sin rótulo fijo delante, para
   // no duplicar la palabra.
+  //
+  // "Volver" (pedido tras la Tarea 16): un enlace a la portada (lista de
+  // runs + formulario de lanzar), oculto por defecto -- `arrancar` lo
+  // enseña solo cuando hay `?run=` en la URL (ver más abajo), nunca en la
+  // propia portada, donde no pintaría nada.
   cabecera.innerHTML =
+    '<a id="c-volver" class="campo volver" href="?" hidden>&larr; volver</a>' +
     '<span class="campo">run <strong id="c-run">—</strong></span>' +
     '<span class="campo"><strong id="c-vuelta">vuelta —/?</strong></span>' +
     '<span class="campo">coste <strong id="c-coste">—</strong></span>' +
     '<span class="campo">reloj <strong id="c-reloj">—</strong></span>' +
     '<span class="campo">motivo <strong id="c-motivo">—</strong></span>';
   return {
+    volver: cabecera.querySelector("#c-volver"),
     run: cabecera.querySelector("#c-run"),
     vuelta: cabecera.querySelector("#c-vuelta"),
     coste: cabecera.querySelector("#c-coste"),
