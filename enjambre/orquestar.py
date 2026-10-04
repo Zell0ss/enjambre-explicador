@@ -381,6 +381,13 @@ def _crear_analizador() -> argparse.ArgumentParser:
     analizador.add_argument("--max-vueltas", type=int, default=2)
     analizador.add_argument("--timeout", type=float, default=600.0)
     analizador.add_argument("--falso", action="store_true")
+    # Anexo 2026-10-04, Tarea 15 (D21): lo fija `pantalla.py` al lanzar un
+    # run desde la página -- el nombre lo decide el servidor (con segundos,
+    # para no chocar) y se lo pasa aquí para que el subproceso escriba
+    # exactamente en el `salida` que la pantalla ya le prometió al navegador
+    # antes de que exista. Sin él, igual que siempre (`orquestar()` lo
+    # genera a partir de la hora actual).
+    analizador.add_argument("--run", default=None)
     return analizador
 
 
@@ -409,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
                 tope_usd=args.tope_usd,
                 max_vueltas=args.max_vueltas,
                 timeout_s=args.timeout,
+                run=args.run,
             )
         )
     except KeyboardInterrupt:

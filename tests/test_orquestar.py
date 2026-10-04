@@ -326,6 +326,28 @@ async def test_num_turns_llega_al_evento_fin_agente(repo, tmp_path):
     assert fin_cartografo["num_turns"] == 3
 
 
+def test_main_acepta_run(tmp_path, monkeypatch):
+    """Anexo 2026-10-04, Tarea 15 (D21): `--run` tiene que llegar hasta
+    `orquestar(run=...)`. `main()` en modo `--falso` fija `retardo_s=0.5`
+    (son ~90 eventos en un run típico -> ~45s de sleeps que no aportan nada
+    aquí, el plan explícitamente permite no pagarlos): se parchea
+    `enjambre.falso.hacer_lanzar_falso` para que ignore el `retardo_s` que le
+    pase `main()` y use 0 -- mismo `lanzar` real, mismo camino de código,
+    solo sin las pausas pensadas para que un humano vea el run en vivo."""
+    import enjambre.falso
+
+    original = enjambre.falso.hacer_lanzar_falso
+    monkeypatch.setattr(enjambre.falso, "hacer_lanzar_falso", lambda retardo_s=0.0: original(retardo_s=0))
+
+    from enjambre.orquestar import main
+
+    repo = tmp_path / "agora"
+    repo.mkdir()
+    codigo = main(["--repo", str(repo), "--salidas", str(tmp_path / "s"), "--falso", "--run", "fijo-1"])
+    assert codigo == 0
+    assert (tmp_path / "s" / "agora" / "fijo-1" / "eventos.jsonl").exists()
+
+
 async def test_guion_con_entrada_asincrona(repo, tmp_path):
     """D-pendiente (patch B): una entrada de guion puede ser `async def` (o
     cualquier callable cuya llamada devuelva un awaitable), no solo sync."""

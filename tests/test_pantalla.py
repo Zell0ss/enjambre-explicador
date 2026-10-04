@@ -1,4 +1,6 @@
 import json
+import signal
+import sys
 import threading
 import time
 import urllib.error
@@ -202,3 +204,91 @@ def test_byte_nulo_en_ruta_es_404(srv):
     with pytest.raises(urllib.error.HTTPError) as e:
         get(base + "/api/fichero/agora/r1/%00")
     assert e.value.code == 404
+
+
+# ---------------------------------------------------------------------------
+# Anexo 2026-10-04, Tarea 15 (D21): lanzar y parar el run desde la página.
+# Fixture y pruebas literales del plan -- `comando` sustituye el subproceso
+# real (`python -m enjambre.orquestar`) por uno de mentira que no importa
+# nada de `enjambre` ni gasta un token: ver el principio de la tarea,
+# "el servidor... nunca importa enjambre.orquestar ni el SDK".
+# ---------------------------------------------------------------------------
+
+
+def _post(url, cuerpo=None, cabeceras=True):
+    datos = json.dumps(cuerpo or {}).encode()
+    h = {"Content-Type": "application/json", "X-Enjambre": "1"} if cabeceras else {"Content-Type": "text/plain"}
+    req = urllib.request.Request(url, data=datos, headers=h, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+
+# Proceso de mentira: espera hasta SIGINT y deja constancia.
+_FALSO = (
+    "import signal,sys,time,pathlib\n"
+    "m=pathlib.Path(sys.argv[1])\n"
+    "signal.signal(signal.SIGINT, lambda *a: (m.write_text('parado'), sys.exit(130)))\n"
+    "time.sleep(30)\n"
+)
+
+
+@pytest.fixture
+def lanzador(tmp_path):
+    salidas, est, raiz = tmp_path / "salidas", tmp_path / "pantalla", tmp_path / "data"
+    salidas.mkdir(); est.mkdir(); (raiz / "agora").mkdir(parents=True)
+    (est / "index.html").write_text("x")
+    marca = tmp_path / "marca.txt"
+    comando = lambda args: [sys.executable, "-c", _FALSO, str(marca)]
+    s = crear_servidor("127.0.0.1", 0, salidas, est, raiz_repos=raiz, comando=comando, dir_logs=tmp_path / "logs")
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{s.server_address[1]}", raiz, marca
+    _post(f"http://127.0.0.1:{s.server_address[1]}/api/parar")
+    s.shutdown()
+
+
+VALIDO = {"tope_usd": 5, "max_vueltas": 2, "falso": True}
+
+
+def test_lanzar_y_parar(lanzador):
+    base, raiz, marca = lanzador
+    codigo, r = _post(base + "/api/lanzar", {"repo": str(raiz / "agora"), **VALIDO})
+    assert codigo == 202 and r["repo"] == "agora" and r["run"].startswith("agora-")
+    assert json.loads(get(base + "/api/lanzador")[1])["en_marcha"] is True
+    assert _post(base + "/api/lanzar", {"repo": str(raiz / "agora"), **VALIDO})[0] == 409
+    assert _post(base + "/api/parar")[0] == 202
+    for _ in range(50):
+        if marca.exists():
+            break
+        time.sleep(0.1)
+    assert marca.read_text() == "parado"
+
+
+@pytest.mark.parametrize(
+    "cuerpo",
+    [
+        {"repo": "/etc", **VALIDO},
+        {"repo": "RAIZ/agora/../../..", **VALIDO},
+        {"repo": "RAIZ/no-existe", **VALIDO},
+        {"repo": "RAIZ/agora", **{**VALIDO, "tope_usd": 50}},
+        {"repo": "RAIZ/agora", **{**VALIDO, "tope_usd": 0}},
+        {"repo": "RAIZ/agora", **{**VALIDO, "max_vueltas": 9}},
+        {"repo": "RAIZ/agora", **{**VALIDO, "falso": "si"}},
+    ],
+)
+def test_lanzar_valida(lanzador, cuerpo):
+    base, raiz, _ = lanzador
+    cuerpo = {**cuerpo, "repo": cuerpo["repo"].replace("RAIZ", str(raiz))}
+    assert _post(base + "/api/lanzar", cuerpo)[0] == 400
+
+
+def test_lanzar_sin_cabeceras_es_403(lanzador):
+    base, raiz, _ = lanzador
+    assert _post(base + "/api/lanzar", {"repo": str(raiz / "agora"), **VALIDO}, cabeceras=False)[0] == 403
+
+
+def test_parar_sin_run_es_409(lanzador):
+    base, _, _ = lanzador
+    assert _post(base + "/api/parar")[0] == 409

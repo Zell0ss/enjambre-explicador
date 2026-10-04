@@ -234,12 +234,79 @@
   .item-inventario:hover {
     color: #c9a0e8;
   }
+  /* Anexo 2026-10-04, Tarea 15 (D21): formulario para lanzar un run desde
+     la propia página, encima de la lista de runs. */
+  .form-lanzar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #1a2230;
+    border: 1px solid #333c4a;
+    border-radius: 4px;
+  }
+  .form-lanzar label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .form-lanzar input[type="text"] {
+    width: 220px;
+  }
+  .form-lanzar input[type="number"] {
+    width: 64px;
+  }
+  .form-lanzar input,
+  .form-lanzar button {
+    background: #0b0f14;
+    color: #e8e0c8;
+    border: 1px solid #333c4a;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  .form-lanzar button {
+    cursor: pointer;
+  }
+  .form-lanzar button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .form-lanzar .error-lanzar {
+    width: 100%;
+    color: #ff6b6b;
+  }
+  #btn-parar {
+    background: #3a1e1e;
+    color: #ff9ecb;
+    border: 1px solid #5a2a2a;
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-family: inherit;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <header id="cabecera" class="cabecera"></header>
 
 <main>
+  <!-- Anexo 2026-10-04, Tarea 15 (D21). La rellena/gobierna escena.js
+       (`_instalarFormularioLanzar`). "falso" empieza marcado a propósito
+       (gastar de verdad es la excepción, no el default). -->
+  <form id="form-lanzar" class="form-lanzar">
+    <label>repo <input id="f-repo" type="text" value="/data/agora" /></label>
+    <label>tope $ <input id="f-tope" type="number" value="5" min="0" max="10" step="0.5" /></label>
+    <label>vueltas <input id="f-vueltas" type="number" value="2" min="0" max="3" /></label>
+    <label><input id="f-falso" type="checkbox" checked /> falso (sin gastar)</label>
+    <button id="btn-lanzar" type="submit">Lanzar</button>
+    <span id="error-lanzar" class="error-lanzar"></span>
+  </form>
+
   <div id="lista-runs" class="lista-runs"></div>
 
   <div id="zona-lienzo" class="zona-lienzo" hidden>
@@ -256,6 +323,10 @@
     </div>
 
     <div id="aviso-directo" class="aviso-directo" hidden></div>
+
+    <!-- Anexo 2026-10-04, Tarea 15 (D21): solo visible en modo directo
+         mientras no haya llegado run_fin -- lo gobierna _arrancarDirecto. -->
+    <button id="btn-parar" type="button" hidden>Parar</button>
 
     <!-- D20 punto 6: bitácora e inventario fuera del lienzo. Las rellena
          escena.js (_actualizarBitacora/_actualizarInventario) cada vez que

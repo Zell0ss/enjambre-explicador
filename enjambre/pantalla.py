@@ -16,14 +16,32 @@ escapar una excepción no prevista: ver `_despacha`).
 """
 
 import argparse
+import datetime
 import json
 import mimetypes
 import re
+import signal
+import subprocess
 import sys
+import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# Raíz de ESTE repo (enjambre-explicador), no la del repo que se vaya a
+# analizar -- el subproceso de un run lanzado desde la página (anexo
+# 2026-10-04, Tarea 15, D21) se arranca con este directorio como `cwd` para
+# que `python -m enjambre.orquestar` se encuentre sea cual sea el repo de
+# destino. Mismo patrón que ya usaba `_crear_analizador` para los defaults
+# de `--salidas`/`--estaticos`.
+_RAIZ_ENJAMBRE = Path(__file__).resolve().parent.parent
+
+# Ver el comentario de `_ManejadorPantalla._parar` (carrera entre
+# `subprocess.Popen` y `send_signal(SIGINT)` si el proceso recién lanzado
+# aún no ha instalado su manejador de señales).
+_MARGEN_ARRANQUE_S = 0.2
 
 # Rutas de §5.1 del diseño. Los grupos de repo/run son `[^/]+` (un solo
 # segmento); `<ruta...>` de /api/fichero es `.+` (puede llevar más barras:
@@ -65,6 +83,44 @@ def _resuelve_dentro(base: Path, ruta_relativa: str) -> Path | None:
     if candidato == base_r or candidato.is_relative_to(base_r):
         return candidato
     return None
+
+
+def _valida_lanzar(cuerpo: dict, raiz_repos: Path) -> tuple[Path, float, int, bool] | str:
+    """Valida el cuerpo de `POST /api/lanzar` (anexo 2026-10-04, Tarea 15,
+    D21). Devuelve `(repo, tope_usd, max_vueltas, falso)` ya validados y
+    listos para pasar a `comando`, o un string con el motivo del rechazo
+    (400) -- nunca lanza: toda entrada de red es sospechosa por defecto,
+    mismo criterio que `_resuelve_dentro` para las rutas de `/api/fichero`.
+
+    `isinstance(x, bool)` antes que `isinstance(x, (int, float))` en
+    `tope_usd`/`max_vueltas` porque `bool` es subclase de `int` en Python --
+    sin ese orden, `{"tope_usd": true}` colaría como `tope_usd=1`."""
+    repo = cuerpo.get("repo")
+    if not isinstance(repo, str) or not repo:
+        return "repo debe ser una ruta no vacía"
+    try:
+        repo_path = Path(repo).resolve()
+    except (OSError, ValueError):
+        return "repo no es una ruta válida"
+    raiz_r = raiz_repos.resolve()
+    if not (repo_path == raiz_r or repo_path.is_relative_to(raiz_r)):
+        return f"repo debe estar bajo {raiz_r}"
+    if not repo_path.is_dir():
+        return "repo no es un directorio existente"
+
+    tope_usd = cuerpo.get("tope_usd")
+    if isinstance(tope_usd, bool) or not isinstance(tope_usd, (int, float)) or not (0 < tope_usd <= 10):
+        return "tope_usd debe ser un número mayor que 0 y como mucho 10"
+
+    max_vueltas = cuerpo.get("max_vueltas")
+    if isinstance(max_vueltas, bool) or not isinstance(max_vueltas, int) or not (0 <= max_vueltas <= 3):
+        return "max_vueltas debe ser un entero entre 0 y 3"
+
+    falso = cuerpo.get("falso")
+    if not isinstance(falso, bool):
+        return "falso debe ser un booleano"
+
+    return repo_path, float(tope_usd), max_vueltas, falso
 
 
 def _listar_runs(salidas: Path) -> list[dict]:
@@ -142,6 +198,154 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             # tumbe el hilo de ThreadingHTTPServer.
             pass
 
+    def do_POST(self) -> None:  # noqa: N802 (nombre fijado por BaseHTTPRequestHandler)
+        try:
+            self._despacha_post()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _despacha_post(self) -> None:
+        """`POST /api/lanzar` y `POST /api/parar` (anexo 2026-10-04, Tarea
+        15, D21). Anti-CSRF antes de leer ni validar nada: `Content-Type:
+        application/json` + cabecera `X-Enjambre: 1` -- una web ajena
+        abierta en el navegador de Josem no puede mandar esa combinación sin
+        un preflight CORS, y este servidor no responde CORS, así que el
+        preflight falla antes de que el navegador llegue a mandar el POST
+        de verdad."""
+        ruta = urllib.parse.urlsplit(self.path).path
+        if ruta not in ("/api/lanzar", "/api/parar"):
+            self.send_error(404)
+            return
+
+        tipo_contenido = self.headers.get("Content-Type", "").split(";")[0].strip()
+        if tipo_contenido != "application/json" or self.headers.get("X-Enjambre") != "1":
+            self._responde_json(403, {"error": "faltan cabeceras anti-CSRF"})
+            return
+
+        if ruta == "/api/lanzar":
+            self._lanzar()
+        else:
+            self._parar()
+
+    def _responde_json(self, status: int, cuerpo: dict) -> None:
+        datos = json.dumps(cuerpo).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(datos)))
+        self.end_headers()
+        self.wfile.write(datos)
+
+    def _lanzar(self) -> None:
+        longitud = int(self.headers.get("Content-Length") or 0)
+        crudo = self.rfile.read(longitud) if longitud > 0 else b""
+        try:
+            cuerpo = json.loads(crudo) if crudo else {}
+        except json.JSONDecodeError:
+            self._responde_json(400, {"error": "cuerpo no es JSON válido"})
+            return
+        if not isinstance(cuerpo, dict):
+            self._responde_json(400, {"error": "cuerpo debe ser un objeto JSON"})
+            return
+
+        validado = _valida_lanzar(cuerpo, self.server.raiz_repos)  # type: ignore[attr-defined]
+        if isinstance(validado, str):
+            self._responde_json(400, {"error": validado})
+            return
+        repo_path, tope_usd, max_vueltas, falso = validado
+
+        with self.server.lock:  # type: ignore[attr-defined]
+            proc = self.server.proc  # type: ignore[attr-defined]
+            if proc is not None and proc.poll() is None:
+                self._responde_json(409, {"error": "ya hay un run en marcha"})
+                return
+
+            # Con segundos (no solo %Y%m%d-%H%M como el nombre por defecto
+            # de `orquestar()`) para no chocar si Josem lanza dos veces
+            # seguidas dentro del mismo minuto.
+            run = f"{repo_path.name}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+            args = [
+                "--repo",
+                str(repo_path),
+                "--salidas",
+                str(self.server.salidas),  # type: ignore[attr-defined]
+                "--tope-usd",
+                str(tope_usd),
+                "--max-vueltas",
+                str(max_vueltas),
+                "--run",
+                run,
+            ]
+            if falso:
+                args.append("--falso")
+            argv = self.server.comando(args)  # type: ignore[attr-defined]
+
+            dir_logs = self.server.dir_logs  # type: ignore[attr-defined]
+            dir_logs.mkdir(parents=True, exist_ok=True)
+            with open(dir_logs / f"{run}.log", "wb") as log_fh:
+                # start_new_session=True: el run sobrevive a un reinicio de
+                # la pantalla (que entonces lo "olvida" -- /api/lanzador
+                # volverá a decir en_marcha=false; aceptado en el POC, el
+                # plan lo dice explícitamente). cwd=_RAIZ_ENJAMBRE, NUNCA el
+                # `repo_path` del usuario: este proceso solo sabe lanzar
+                # "python -m enjambre.orquestar" desde su propia raíz.
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=_RAIZ_ENJAMBRE,
+                    start_new_session=True,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                )
+            self.server.proc = proc  # type: ignore[attr-defined]
+            self.server.proc_lanzado_en = time.monotonic()  # type: ignore[attr-defined]
+            self.server.proc_repo = repo_path.name  # type: ignore[attr-defined]
+            self.server.proc_run = run  # type: ignore[attr-defined]
+
+        self._responde_json(202, {"repo": repo_path.name, "run": run})
+
+    def _parar(self) -> None:
+        with self.server.lock:  # type: ignore[attr-defined]
+            proc = self.server.proc  # type: ignore[attr-defined]
+            if proc is None or proc.poll() is not None:
+                self._responde_json(409, {"error": "no hay ningún run en marcha"})
+                return
+            # Margen de arranque: mandar SIGINT a un proceso recién lanzado
+            # (`python -m enjambre.orquestar`, o el de mentira de las
+            # pruebas) puede llegar ANTES de que ese proceso haya terminado
+            # de arrancar el intérprete y de instalar su propio manejador de
+            # señales -- en ese caso el SIGINT lo mata con el manejador por
+            # defecto de Python (sale con el proceso terminado, sin más) en
+            # vez de dejar que escriba su `run_fin: interrumpido`. Medido
+            # empíricamente en este disco: un `python -c "..."` necesita
+            # ~30ms hasta registrar `signal.signal(...)` (10/10 aciertos a
+            # partir de 30ms, 4/10 a los 20ms, 0/10 sin espera) -- 0.2s deja
+            # margen de sobra para eso y para el --falso real (importa algo
+            # más). Nunca se espera de más: si el proceso ya lleva más de
+            # `_MARGEN_ARRANQUE_S` corriendo (el caso normal: Josem para un
+            # run que lleva un rato en marcha), `restante` sale <= 0 y no se
+            # duerme nada.
+            transcurrido = time.monotonic() - self.server.proc_lanzado_en  # type: ignore[attr-defined]
+            restante = _MARGEN_ARRANQUE_S - transcurrido
+            if restante > 0:
+                time.sleep(restante)
+            # El orquestador ya convierte esto en un `run_fin` con
+            # `motivo: interrumpido` (verificado contra una ejecución real,
+            # no solo asumido -- ver CancelledError/except en orquestar.py)
+            # antes de que el proceso termine de verdad.
+            proc.send_signal(signal.SIGINT)
+        self._responde_json(202, {})
+
+    def _servir_lanzador(self) -> None:
+        proc = self.server.proc  # type: ignore[attr-defined]
+        en_marcha = proc is not None and proc.poll() is None
+        self._responde_json(
+            200,
+            {
+                "en_marcha": en_marcha,
+                "repo": self.server.proc_repo if en_marcha else None,  # type: ignore[attr-defined]
+                "run": self.server.proc_run if en_marcha else None,  # type: ignore[attr-defined]
+            },
+        )
+
     def _despacha(self) -> None:
         ruta = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
 
@@ -165,6 +369,10 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
 
         if ruta == "/api/runs":
             self._servir_runs()
+            return
+
+        if ruta == "/api/lanzador":
+            self._servir_lanzador()
             return
 
         m = _RUTA_EVENTOS.match(ruta)
@@ -248,15 +456,28 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         se escribe un comentario SSE (`: \\n\\n`) solo para que un `write`/
         `flush` sobre un socket ya cerrado por el cliente falle y lo
         detecte -- si no, un cliente desconectado sobre un run sin
-        `run_fin` deja el hilo de sondeo vivo para siempre."""
-        run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
-        if run_dir is None or not run_dir.is_dir():
-            self.send_error(404)
-            return
-        eventos_path = run_dir / "eventos.jsonl"
-        if not eventos_path.is_file():
-            self.send_error(404)
-            return
+        `run_fin` deja el hilo de sondeo vivo para siempre.
+
+        Anexo 2026-10-04 (D21, Tarea 15): si el run se acaba de lanzar desde
+        la página, el navegador puede llegar aquí nada más recibir el 202 de
+        `POST /api/lanzar` -- antes de que el subproceso recién arrancado
+        haya creado siquiera el directorio o escrito la primera línea. Se
+        sondea hasta 30s (ni el directorio ni el fichero tienen por qué
+        existir todavía) en vez de dar 404 al primer intento, para no perder
+        esa carrera contra el propio subproceso que acabamos de lanzar."""
+        plazo = time.monotonic() + 30
+        eventos_path = None
+        while True:
+            run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
+            if run_dir is not None and run_dir.is_dir():
+                candidato = run_dir / "eventos.jsonl"
+                if candidato.is_file():
+                    eventos_path = candidato
+                    break
+            if time.monotonic() >= plazo:
+                self.send_error(404)
+                return
+            time.sleep(0.3)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -305,9 +526,27 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                         return
 
 
-def crear_servidor(host: str, puerto: int, salidas: Path, estaticos: Path) -> ThreadingHTTPServer:
+def crear_servidor(
+    host: str,
+    puerto: int,
+    salidas: Path,
+    estaticos: Path,
+    *,
+    raiz_repos: Path = Path("/data"),
+    comando: Callable[[list[str]], list[str]] | None = None,
+    dir_logs: Path = _RAIZ_ENJAMBRE / "logs" / "lanzamientos",
+) -> ThreadingHTTPServer:
     """Crea el servidor sin arrancarlo (el llamador decide hilo/`serve_forever`,
-    como hace `tests/test_pantalla.py` y `main` de abajo)."""
+    como hace `tests/test_pantalla.py` y `main` de abajo).
+
+    `raiz_repos`/`comando`/`dir_logs` son del anexo 2026-10-04 (Tarea 15,
+    D21, "lanzar el run desde la página"): `raiz_repos` acota qué repos se
+    pueden lanzar (`_valida_lanzar`); `comando` decide el argv real del
+    subproceso (por defecto `[sys.executable, "-m", "enjambre.orquestar",
+    *args]` -- las pruebas lo sustituyen por un proceso de mentira que no
+    importa nada de `enjambre` ni gasta un token, ver `tests/test_pantalla.py`);
+    `dir_logs` es dónde cae el stdout+stderr combinado de cada run lanzado
+    así (un fichero por run, `<run>.log`)."""
 
     class _Servidor(ThreadingHTTPServer):
         # D12: cada conexión (incluidas las SSE, que se quedan abiertas
@@ -318,6 +557,18 @@ def crear_servidor(host: str, puerto: int, salidas: Path, estaticos: Path) -> Th
     servidor = _Servidor((host, puerto), _ManejadorPantalla)
     servidor.salidas = salidas  # type: ignore[attr-defined]
     servidor.estaticos = estaticos  # type: ignore[attr-defined]
+    servidor.raiz_repos = raiz_repos  # type: ignore[attr-defined]
+    servidor.comando = comando or (lambda args: [sys.executable, "-m", "enjambre.orquestar", *args])  # type: ignore[attr-defined]
+    servidor.dir_logs = dir_logs  # type: ignore[attr-defined]
+    # Un run a la vez (D21): `lock` protege el check-y-arranca de
+    # `_lanzar`/`_parar` contra dos POST concurrentes; `proc`/`proc_repo`/
+    # `proc_run` son el único estado que este servidor guarda sobre el
+    # subproceso -- nunca importa `enjambre.orquestar` para saber más.
+    servidor.lock = threading.Lock()  # type: ignore[attr-defined]
+    servidor.proc = None  # type: ignore[attr-defined]
+    servidor.proc_lanzado_en = None  # type: ignore[attr-defined]
+    servidor.proc_repo = None  # type: ignore[attr-defined]
+    servidor.proc_run = None  # type: ignore[attr-defined]
     return servidor
 
 

@@ -99,11 +99,14 @@ export async function arrancar(lienzo, cabecera) {
 
   const zonaLienzo = document.getElementById("zona-lienzo");
   const listaRuns = document.getElementById("lista-runs");
+  const formLanzar = document.getElementById("form-lanzar");
 
   if (!run) {
     if (zonaLienzo) zonaLienzo.hidden = true;
     if (listaRuns) listaRuns.hidden = false;
+    if (formLanzar) formLanzar.hidden = false;
     _cargarListaRuns(listaRuns);
+    _instalarFormularioLanzar(formLanzar);
     // Nada que pintar todavía: se deja el lienzo con el estado inicial
     // en blanco para que no quede un canvas sin inicializar si alguien
     // navega hacia atrás desde una repetición.
@@ -114,6 +117,7 @@ export async function arrancar(lienzo, cabecera) {
 
   if (zonaLienzo) zonaLienzo.hidden = false;
   if (listaRuns) listaRuns.hidden = true;
+  if (formLanzar) formLanzar.hidden = true;
 
   const partido = run.split("/");
   _repo = partido[0] || "";
@@ -529,6 +533,69 @@ async function _cargarListaRuns(contenedor) {
 }
 
 // ---------------------------------------------------------------------------
+// Formulario de lanzar (anexo 2026-10-04, Tarea 15, D21): en la portada
+// (sin ?run=), encima de la lista de runs. Instalado una vez por carga de
+// página -- si Josem navega de vuelta a la portada, `arrancar()` vuelve a
+// llamar a esta función sobre el mismo <form> del DOM, reemplazando el
+// `onsubmit` anterior sin duplicarlo.
+// ---------------------------------------------------------------------------
+
+async function _instalarFormularioLanzar(form) {
+  if (!form) return;
+  const btn = document.getElementById("btn-lanzar");
+  const error = document.getElementById("error-lanzar");
+  if (error) error.textContent = "";
+
+  // "El botón Lanzar se desactiva si /api/lanzador dice en_marcha" -- se
+  // comprueba una vez al mostrar la portada (no hay polling continuo
+  // pedido por el plan); si Josem para el run o este termina mientras tiene
+  // la portada abierta, un refresco de página vuelve a comprobarlo.
+  try {
+    const resp = await fetch("/api/lanzador");
+    const estado = await resp.json();
+    if (estado.en_marcha) {
+      if (btn) btn.disabled = true;
+      if (error) error.textContent = `ya hay un run en marcha: ${estado.repo}/${estado.run}`;
+    } else if (btn) {
+      btn.disabled = false;
+    }
+  } catch {
+    // Un fallo aquí no debe bloquear el formulario entero -- se deja el
+    // botón como estuviera y que sea /api/lanzar quien dé la última
+    // palabra (409 si de verdad hay un run en marcha).
+  }
+
+  form.onsubmit = async (evt) => {
+    evt.preventDefault();
+    if (error) error.textContent = "";
+    if (btn) btn.disabled = true;
+
+    const repo = (document.getElementById("f-repo") || {}).value?.trim() || "";
+    const tope_usd = Number((document.getElementById("f-tope") || {}).value);
+    const max_vueltas = Number((document.getElementById("f-vueltas") || {}).value);
+    const falso = !!(document.getElementById("f-falso") || {}).checked;
+
+    try {
+      const resp = await fetch("/api/lanzar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+        body: JSON.stringify({ repo, tope_usd, max_vueltas, falso }),
+      });
+      const cuerpo = await resp.json().catch(() => ({}));
+      if (resp.status === 202) {
+        location.href = `?run=${encodeURIComponent(`${cuerpo.repo}/${cuerpo.run}`)}&modo=directo`;
+        return; // la navegación ya se encarga de todo lo demás
+      }
+      if (error) error.textContent = cuerpo.error || `error ${resp.status} al lanzar`;
+    } catch (err) {
+      if (error) error.textContent = `no se pudo contactar con el servidor: ${err}`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Modo repetición: reloj virtual propio, con compresión de huecos >5s a 1s
 // (si no, ver a un Sonnet "pensando" en un hueco real es aburrido — pedido
 // explícito del plan, Tarea 10).
@@ -686,6 +753,41 @@ function _arrancarDirecto(repo, run) {
     aviso.hidden = false;
   };
 
+  // Botón Parar (D21): visible en directo mientras no llegue `run_fin`,
+  // igual que pide el plan. Pulsarlo llama a `POST /api/parar` -- el propio
+  // `run_fin` (con `motivo: interrumpido`) llega por el mismo `EventSource`
+  // de siempre, no hace falta tocar nada más aquí para que la pantalla se
+  // entere. Si el servidor dice 409 (nada que parar desde su punto de
+  // vista -- p.ej. este run se lanzó por CLI, no desde la página, D21:
+  // "el servidor solo sabe lo que lanzó él mismo"), se avisa en vez de
+  // fallar en silencio.
+  const btnParar = document.getElementById("btn-parar");
+  if (btnParar) {
+    btnParar.hidden = false;
+    btnParar.disabled = false;
+    btnParar.onclick = async () => {
+      btnParar.disabled = true;
+      try {
+        const resp = await fetch("/api/parar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+          body: "{}",
+        });
+        if (resp.status !== 202) {
+          const cuerpo = await resp.json().catch(() => ({}));
+          mostrarAviso(cuerpo.error || `no se pudo parar (error ${resp.status})`);
+          btnParar.disabled = false;
+        }
+        // 202: no hace falta nada más -- el run_fin:interrumpido llegará
+        // solo por el EventSource y disparará la rama de abajo, que ya
+        // oculta este botón.
+      } catch (err) {
+        mostrarAviso(`no se pudo contactar con el servidor: ${err}`);
+        btnParar.disabled = false;
+      }
+    };
+  }
+
   _estado = inicial();
   _estado.run = run;
   _actualizarCabecera("EN DIRECTO");
@@ -708,6 +810,7 @@ function _arrancarDirecto(repo, run) {
     if (evento.tipo === "run_fin") {
       terminado = true;
       es.close();
+      if (btnParar) btnParar.hidden = true;
       if (aviso) {
         aviso.innerHTML = "";
         aviso.append("run terminado -- ");
