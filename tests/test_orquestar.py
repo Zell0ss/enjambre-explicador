@@ -6,7 +6,7 @@ import pytest
 
 import enjambre.orquestar as orquestar_mod
 from enjambre.falso import hacer_lanzar_falso
-from enjambre.orquestar import orquestar
+from enjambre.orquestar import orquestar, reanudar
 from enjambre.tipos import Resultado
 
 
@@ -341,6 +341,70 @@ async def test_vuelta_1_no_se_ve_afectada_por_el_borrado_de_d16(repo, tmp_path):
     de una sola vuelta debe seguir aprobando igual que antes del parche."""
     fin = await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
     assert fin["motivo"] == "aprobado" and fin["vueltas"] == 1
+
+
+# --- D24/D25 (Tarea 17): continuar un run parado ----------------------------
+
+
+def _tras_reanudar(evs):
+    i = next(i for i, e in enumerate(evs) if e["tipo"] == "reanudado")
+    return evs[i], evs[i:]
+
+
+async def test_reanudar_tras_tope_coste_no_repite_pasos(repo, tmp_path):
+    lanzar = hacer_lanzar_falso()
+    fin1 = await orquestar(repo, tmp_path / "s", lanzar, run="r1", tope_usd=0.045)  # para justo antes del trazador
+    assert fin1["motivo"] == "tope_coste"
+    fin2 = await reanudar(tmp_path / "s" / "agora" / "r1", lanzar, tope_usd=5)
+    assert fin2["motivo"] == "aprobado"
+    evs = eventos(tmp_path / "s")
+    reanudado, despues = _tras_reanudar(evs)
+    assert reanudado["desde"] == "tope_coste"
+    assert reanudado["coste_previo_usd"] == pytest.approx(0.05)
+    assert lanzados(despues) == ["trazador", "redactor", "verificador", "novato"]
+    assert [e["tipo"] for e in evs].count("run_inicio") == 1
+    assert fin2["coste_total_usd"] == pytest.approx(0.09)
+
+
+async def test_reanudar_tras_fallo_relanza_solo_ese_lector_y_borra_lo_que_dejo(repo, tmp_path):
+    ficha_previa = []
+
+    def a_medias(agente, instancia, encargo, ctx):
+        (ctx.salida / "fichas").mkdir(exist_ok=True)
+        (ctx.salida / "fichas" / "b-dos.md").write_text("a medias")
+        return Resultado("error", coste_usd=0.01)
+
+    def segunda(agente, instancia, encargo, ctx):
+        ficha_previa.append((ctx.salida / "fichas" / "b-dos.md").exists())
+        (ctx.salida / "fichas" / "b-dos.md").write_text("## Ficha\n")
+        return Resultado("terminado", coste_usd=0.01)
+
+    lanzar = hacer_lanzar_falso({"lector-de-pieza:b-dos": [a_medias, segunda]})
+    fin1 = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
+    assert fin1["motivo"] == "fallo:lector-de-pieza:b-dos:error"
+    fin2 = await reanudar(tmp_path / "s" / "agora" / "r1", lanzar)
+    assert fin2["motivo"] == "aprobado"
+    assert ficha_previa == [False]          # D25
+    _, despues = _tras_reanudar(eventos(tmp_path / "s"))
+    assert lanzados(despues)[0] == "lector-de-pieza:b-dos"
+    assert not {"cartografo", "despiezador", "lector-de-pieza:a-uno", "lector-de-pieza:c-tres"} & set(lanzados(despues))
+
+
+async def test_reanudar_tras_tope_vueltas_recupera_las_vueltas_hechas(repo, tmp_path):
+    lanzar = hacer_lanzar_falso({"verificador": [_verificacion_con_fallos] * 4})
+    fin1 = await orquestar(repo, tmp_path / "s", lanzar, run="r1", max_vueltas=2)
+    assert fin1["motivo"] == "tope_vueltas" and fin1["vueltas"] == 3
+    fin2 = await reanudar(tmp_path / "s" / "agora" / "r1", lanzar, max_vueltas=3)
+    assert fin2["motivo"] == "tope_vueltas" and fin2["vueltas"] == 4
+    _, despues = _tras_reanudar(eventos(tmp_path / "s"))
+    assert lanzados(despues) == ["redactor", "verificador", "novato"]
+    assert [e["n"] for e in despues if e["tipo"] == "vuelta"] == [4]
+
+
+async def test_no_se_reanuda_un_run_aprobado(repo, tmp_path):
+    await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+    with pytest.raises(ValueError):
+        await reanudar(tmp_path / "s" / "agora" / "r1", hacer_lanzar_falso())
 
 
 # --- num_turns: de Resultado al evento fin_agente ---------------------------

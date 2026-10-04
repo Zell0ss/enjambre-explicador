@@ -15,6 +15,7 @@ vueltas (D9) -- nunca un LLM opinando sobre si ya ha terminado.
 
 import argparse
 import asyncio
+import json
 import shutil
 import sys
 import time
@@ -46,8 +47,20 @@ class _ParaRun(Exception):
 
 @dataclass
 class _Coste:
-    """Acumulador de coste del run; mutable para que `_paso` lo vaya sumando."""
+    """Acumulador de coste del run; mutable para que `_paso` lo vaya sumando.
+    En una continuación (D24) arranca en 0 -- solo cuenta lo nuevo de ESTE
+    tramo, nunca lo ya gastado (`coste_previo_usd`, aparte); el `tope_usd`
+    de `reanudar` se compara contra este acumulador, no contra el total."""
     total: float = 0.0
+
+
+@dataclass
+class _Progreso:
+    """Cuántas vueltas se han completado -- mutable y visible desde fuera de
+    `_ejecutar` (el `finally` de quien la llama lo necesita incluso si
+    `_ejecutar` sale por una excepción a mitad de una vuelta), igual que
+    `_Coste` de arriba."""
+    vueltas: int = 0
 
 
 def _comprueba_tope(coste: _Coste, tope_usd: float) -> None:
@@ -82,6 +95,80 @@ def _encargo(rol: str, repo: Path, salida: Path, **campos: object) -> str:
         "Tu directorio de trabajo ya es SALIDA: donde tus instrucciones dicen SALIDA/x, usa x o la ruta absoluta."
     )
     return "\n".join(lineas) + "\n"
+
+
+def _parse_encargo(encargo: str) -> dict[str, str]:
+    """Inverso de `_encargo`: separa las líneas `CLAVE=valor` en un
+    diccionario. Solo lo necesita D24 (`_lanzamientos_hechos`, más abajo)
+    para recuperar `PIEZA`/`MODO` de un `encargo` ya escrito en
+    `eventos.jsonl` -- no vale la pena guardar esos campos aparte en el
+    propio evento `lanzado` cuando ya están codificados en su `encargo`."""
+    campos: dict[str, str] = {}
+    for linea in encargo.splitlines():
+        clave, separador, valor = linea.partition("=")
+        if separador:
+            campos[clave.strip()] = valor.strip()
+    return campos
+
+
+def _ficheros_de_paso(rol: str, campos: dict[str, str]) -> list[str]:
+    """D25: qué ficheros (relativos a `salida`) deja un paso -- los que hay
+    que borrar antes de lanzarlo DE VERDAD, y los que demuestran que una
+    aparición anterior en `eventos.jsonl` está "hecha" (D24, misma lista:
+    ver `_lanzamientos_hechos`). La revisión del redactor (`MODO=revision`)
+    devuelve `[]` a propósito -- no crea un fichero propio distinguible
+    (edita `articulo.md` en sitio), así que ni se borra nada antes de
+    relanzarla ni se exige ningún fichero para darla por hecha (D25: "la
+    revisión del redactor no borra nada")."""
+    if rol == "cartografo":
+        return ["mapa.md"]
+    if rol == "despiezador":
+        return ["piezas.md"]
+    if rol == "lector-de-pieza":
+        return [f"fichas/{campos['PIEZA']}.md"]
+    if rol == "trazador":
+        return ["flujos.md"]
+    if rol == "redactor":
+        if campos.get("MODO") == "revision":
+            return []
+        return ["articulo.md", "cambios.md"]
+    if rol == "verificador":
+        return ["verificacion.md"]
+    if rol == "novato":
+        return ["dudas.md"]
+    return []
+
+
+def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tuple[str, str], int]:
+    """D24: qué lanzamientos del `eventos.jsonl` de un run anterior ya están
+    hechos -- `lanzado` seguido (más adelante, no necesariamente a
+    continuación: otras instancias emiten de por medio mientras corren en
+    paralelo) de `fin_agente` con `estado_final: terminado` para la MISMA
+    instancia, y el fichero que ese paso debía dejar (`_ficheros_de_paso`)
+    existe todavía en disco ahora mismo.
+
+    Clave `(instancia, encargo)`, contando apariciones: la revisión del
+    redactor repite el mismo encargo en cada vuelta (no lleva `VUELTA=n`),
+    así que solo el número de apariciones ya hechas distingue cuántas veces
+    se salta -- `reanudar` consume una por cada `lanza(...)` que coincida,
+    en el mismo orden en que el guion las vuelve a recorrer (FIFO)."""
+    abiertos: dict[str, tuple[str, str]] = {}  # instancia -> (encargo, rol)
+    hechos: dict[tuple[str, str], int] = {}
+    for ev in eventos_previos:
+        tipo = ev.get("tipo")
+        if tipo == "lanzado":
+            abiertos[ev["agente"]] = (ev["encargo"], ev["rol"])
+        elif tipo == "fin_agente":
+            abierto = abiertos.pop(ev.get("agente"), None)
+            if abierto is None or ev.get("estado_final") != "terminado":
+                continue
+            encargo, rol = abierto
+            ficheros = _ficheros_de_paso(rol, _parse_encargo(encargo))
+            if ficheros and not all((salida / f).exists() for f in ficheros):
+                continue
+            clave = (ev["agente"], encargo)
+            hechos[clave] = hechos.get(clave, 0) + 1
+    return hechos
 
 
 async def _paso(
@@ -175,6 +262,191 @@ def _resultado_o_fallo(instancia: str, r) -> Resultado:
     return r
 
 
+async def _ejecutar(
+    ctx: Contexto,
+    lanzar: Lanzar,
+    coste: _Coste,
+    tope_usd: float,
+    max_vueltas: int,
+    timeout_s: float,
+    agentes: dict[str, Agente],
+    progreso: _Progreso,
+    hechos: dict[tuple[str, str], int],
+) -> None:
+    """El guion fijo (D5), de cartógrafo a la última vuelta -- el ÚNICO
+    recorrido (D24: "no hay un segundo guion"). Lo usan tanto un run nuevo
+    (`orquestar`, `hechos={}`: cada `lanza(...)` se ejecuta siempre de
+    verdad, idéntico a antes de la Tarea 17) como una continuación
+    (`reanudar`, `hechos` poblado desde el `eventos.jsonl` anterior): la
+    diferencia entera vive dentro de `lanza`, más abajo, que decide por cada
+    lanzamiento si saltarlo (D24) o lanzarlo de verdad, borrando antes lo
+    que vaya a crear (D25).
+
+    Termina lanzando `_ParaRun` (motivo final) o dejando escapar cualquier
+    otra excepción -- igual que el cuerpo del `orquestar` de antes de la
+    Tarea 17; quien llama (`orquestar`/`reanudar`) pone el `try/except/
+    finally` alrededor y emite su propio `run_fin`, porque el coste previo y
+    el emisor difieren entre un run nuevo y una continuación."""
+
+    def _consumir_hecho(instancia: str, encargo: str) -> bool:
+        """D24: ¿hay una aparición ya hecha de (instancia, encargo) sin
+        consumir? Si la hay, la consume (resta una) y devuelve True."""
+        clave = (instancia, encargo)
+        n = hechos.get(clave, 0)
+        if n <= 0:
+            return False
+        hechos[clave] = n - 1
+        return True
+
+    async def lanza(instancia: str, rol: str, **campos) -> Resultado:
+        encargo = _encargo(rol, ctx.repo, ctx.salida, **campos)
+        if _consumir_hecho(instancia, encargo):
+            # D24: ya está hecho -- ni se llama a `lanzar` ni se emite nada
+            # (ni `lanzado`, ni `estado`, ni `fin_agente`): el `eventos.jsonl`
+            # de la vez anterior ya cuenta esta historia.
+            return Resultado(estado_final="terminado")
+        # D25: antes de lanzar DE VERDAD, borrar lo que este paso va a crear
+        # -- sustituye por completo el borrado puntual de D16 (antes, solo
+        # desde la vuelta 2); aquí es un no-op la primera vez que cada
+        # fichero no existe todavía, y es lo que permite que un paso
+        # relanzado en una continuación encuentre sitio limpio (D25: la tool
+        # `Write` real no sobrescribe un fichero que el agente no haya leído
+        # en su propia sesión).
+        for nombre in _ficheros_de_paso(rol, campos):
+            ruta = ctx.salida / nombre
+            if ruta.exists():
+                ruta.unlink()
+        return await _paso(ctx, lanzar, coste, tope_usd, instancia, agentes[rol], encargo, timeout_s)
+
+    # --- cartografo ---------------------------------------------------
+    r = await lanza("cartografo", "cartografo")
+    _exige_terminado("cartografo", r)
+    _exige(ctx.salida, "mapa.md")
+
+    # --- despiezador ---------------------------------------------------
+    r = await lanza("despiezador", "despiezador")
+    _exige_terminado("despiezador", r)
+    _exige(ctx.salida, "piezas.md")
+    try:
+        ids = ids_de_piezas((ctx.salida / "piezas.md").read_text())
+    except SalidaIlegible:
+        raise _ParaRun("piezas_ilegibles")
+
+    # --- lectores, en paralelo -----------------------------------------
+    instancias = [f"lector-de-pieza:{id_}" for id_ in ids]
+    resultados = await asyncio.gather(
+        *(lanza(instancia, "lector-de-pieza", PIEZA=id_) for instancia, id_ in zip(instancias, ids)),
+        return_exceptions=True,
+    )
+    for instancia, r in zip(instancias, resultados):
+        r = _resultado_o_fallo(instancia, r)
+        _exige_terminado(instancia, r)
+    for id_ in ids:
+        _exige(ctx.salida, f"fichas/{id_}.md")
+
+    # --- trazador -------------------------------------------------------
+    r = await lanza("trazador", "trazador")
+    _exige_terminado("trazador", r)
+    _exige(ctx.salida, "flujos.md")
+
+    # --- redactor, borrador ----------------------------------------------
+    r = await lanza("redactor", "redactor", MODO="borrador")
+    _exige_terminado("redactor", r)
+    _exige(ctx.salida, "articulo.md")
+
+    # --- vueltas de verificación / revisión --------------------------------
+    n = 1
+    while True:
+        # Comprobar el tope de coste ANTES de emitir `vuelta` y de contar
+        # esta `n` como una vuelta hecha: si una revisión anterior ya lo
+        # agotó, el verificador+novato de esta vuelta nunca se intentan,
+        # así que ni el evento `vuelta` ni `progreso.vueltas` deben existir
+        # para ella (bug real: sin este chequeo aquí, `_paso` seguía
+        # frenando a verificador/novato dentro del `gather` de más abajo,
+        # pero `progreso.vueltas = n` ya se había ejecutado para una vuelta
+        # que nunca llegó a lanzar nada).
+        _comprueba_tope(coste, tope_usd)
+
+        # D24 ("vueltas hechas"): si esta vuelta ya se completó del todo en
+        # un tramo anterior -- verificador Y novato hechos, y su copia de
+        # archivo en vueltas/<n>/ existe -- no se relanza nada ni se emite
+        # `vuelta` otra vez; se restauran sus dos ficheros a la raíz de
+        # salida (los de ahí pueden ser de una vuelta MÁS TARDÍA, ya
+        # sobrescritos) y se evalúa igual que siempre. Si falta uno de los
+        # dos (p.ej. el tope de coste cortó entre los dos lanzamientos en
+        # paralelo), esta vuelta NO se da por hecha del todo: se emite
+        # `vuelta` otra vez y se relanza solo el que falte -- `lanza` ya
+        # sabe saltar el que sí está hecho.
+        encargo_ver = _encargo("verificador", ctx.repo, ctx.salida, VUELTA=n)
+        encargo_nov = _encargo("novato", ctx.repo, ctx.salida, VUELTA=n)
+        copia = ctx.salida / "vueltas" / str(n)
+        ver_hecho = hechos.get(("verificador", encargo_ver), 0) > 0
+        nov_hecho = hechos.get(("novato", encargo_nov), 0) > 0
+        vuelta_hecha = (
+            ver_hecho and nov_hecho and (copia / "verificacion.md").exists() and (copia / "dudas.md").exists()
+        )
+
+        if vuelta_hecha:
+            shutil.copy2(copia / "verificacion.md", ctx.salida / "verificacion.md")
+            shutil.copy2(copia / "dudas.md", ctx.salida / "dudas.md")
+            _consumir_hecho("verificador", encargo_ver)
+            _consumir_hecho("novato", encargo_nov)
+            progreso.vueltas = n
+        else:
+            ctx.eventos.emitir("vuelta", n=n)
+
+            r_ver, r_nov = await asyncio.gather(
+                lanza("verificador", "verificador", VUELTA=n),
+                lanza("novato", "novato", VUELTA=n),
+                return_exceptions=True,
+            )
+            # Igual que antes de la Tarea 17: se cuenta esta vuelta como
+            # "hecha" en cuanto se ha intentado -- ANTES de los `_exige*` de
+            # más abajo, que pueden parar el run -- para que un fallo a
+            # mitad de vuelta siga contando (`fin["vueltas"]` incluye la
+            # vuelta fallida, no solo las que llegaron a completarse).
+            progreso.vueltas = n
+            r_ver = _resultado_o_fallo("verificador", r_ver)
+            _exige_terminado("verificador", r_ver)
+            r_nov = _resultado_o_fallo("novato", r_nov)
+            _exige_terminado("novato", r_nov)
+
+            # Exigir que de verdad se hayan escrito verificacion.md/dudas.md
+            # tras este lanzamiento, en TODAS las vueltas (no solo desde la
+            # 2): sin esto, un verificador/novato que no escribe su fichero
+            # deja `n_fallos`/`v` en `None` más abajo -- no cuenta como
+            # aprobado, así que el run sigue de largo, lanza al redactor en
+            # modo revisión y entra en una vuelta completa de más (coste
+            # real) antes de que nada lo note, en vez de parar aquí mismo
+            # con `falta:<fichero>`.
+            _exige(ctx.salida, "verificacion.md")
+            _exige(ctx.salida, "dudas.md")
+
+            # D13: copiar verificacion.md/dudas.md a vueltas/<n>/ antes de
+            # que la vuelta siguiente los sobrescriba (en la fase 1 la
+            # vuelta 1 se perdió así); copiar los que existan, sin tocar los
+            # prompts.
+            copia.mkdir(parents=True, exist_ok=True)
+            for nombre in ("verificacion.md", "dudas.md"):
+                origen = ctx.salida / nombre
+                if origen.exists():
+                    shutil.copy2(origen, copia / nombre)
+
+        ruta_verificacion = ctx.salida / "verificacion.md"
+        ruta_dudas = ctx.salida / "dudas.md"
+        n_fallos = fallos(ruta_verificacion.read_text()) if ruta_verificacion.exists() else None
+        v = veredicto(ruta_dudas.read_text()) if ruta_dudas.exists() else None
+
+        if n_fallos == 0 and v == "listo":
+            raise _ParaRun("aprobado")
+        if n > max_vueltas:
+            raise _ParaRun("tope_vueltas")
+
+        r = await lanza("redactor", "redactor", MODO="revision")
+        _exige_terminado("redactor", r)
+        n += 1
+
+
 async def orquestar(
     repo: Path,
     salidas: Path,
@@ -185,8 +457,14 @@ async def orquestar(
     timeout_s: float = 600,
     max_turns: int = 60,
     run: str | None = None,
+    falso: bool = False,
 ) -> dict:
-    """Lanza el enjambre sobre `repo` y devuelve el evento `run_fin`."""
+    """Lanza el enjambre sobre `repo` y devuelve el evento `run_fin`.
+
+    D24: `falso` no decide qué `lanzar` se usa -- eso lo sigue eligiendo
+    quien llama (`main`), igual que antes -- solo se anota en
+    `params.falso` de `run_inicio`, para que una futura `reanudar` sepa si
+    este run gastaba de verdad sin tener que adivinarlo."""
     run = run or f"{repo.name}-{datetime.now():%Y%m%d-%H%M}"
     salida = salidas / repo.name / run
     if salida.exists():
@@ -196,7 +474,7 @@ async def orquestar(
     eventos = Eventos(salida / "eventos.jsonl", run)
     inicio = time.monotonic()
     coste = _Coste()
-    vueltas_hechas = 0
+    progreso = _Progreso()
     motivo = "excepcion:desconocido"  # se sobrescribe siempre en algún except; no debería sobrevivir.
 
     try:
@@ -206,6 +484,7 @@ async def orquestar(
             "max_vueltas": max_vueltas,
             "timeout_s": timeout_s,
             "max_turns": max_turns,
+            "falso": falso,
         }
         eventos.emitir(
             "run_inicio",
@@ -218,128 +497,7 @@ async def orquestar(
             eventos.emitir("estado", rol, estado="esperando")
 
         ctx = Contexto(repo=repo, salida=salida, eventos=eventos, timeout_s=timeout_s, max_turns=max_turns)
-
-        async def lanza(instancia: str, rol: str, **campos) -> Resultado:
-            encargo = _encargo(rol, repo, salida, **campos)
-            return await _paso(ctx, lanzar, coste, tope_usd, instancia, agentes[rol], encargo, timeout_s)
-
-        # --- cartografo ---------------------------------------------------
-        r = await lanza("cartografo", "cartografo")
-        _exige_terminado("cartografo", r)
-        _exige(salida, "mapa.md")
-
-        # --- despiezador ---------------------------------------------------
-        r = await lanza("despiezador", "despiezador")
-        _exige_terminado("despiezador", r)
-        _exige(salida, "piezas.md")
-        try:
-            ids = ids_de_piezas((salida / "piezas.md").read_text())
-        except SalidaIlegible:
-            raise _ParaRun("piezas_ilegibles")
-
-        # --- lectores, en paralelo -----------------------------------------
-        instancias = [f"lector-de-pieza:{id_}" for id_ in ids]
-        resultados = await asyncio.gather(
-            *(lanza(instancia, "lector-de-pieza", PIEZA=id_) for instancia, id_ in zip(instancias, ids)),
-            return_exceptions=True,
-        )
-        for instancia, r in zip(instancias, resultados):
-            r = _resultado_o_fallo(instancia, r)
-            _exige_terminado(instancia, r)
-        for id_ in ids:
-            _exige(salida, f"fichas/{id_}.md")
-
-        # --- trazador -------------------------------------------------------
-        r = await lanza("trazador", "trazador")
-        _exige_terminado("trazador", r)
-        _exige(salida, "flujos.md")
-
-        # --- redactor, borrador ----------------------------------------------
-        r = await lanza("redactor", "redactor", MODO="borrador")
-        _exige_terminado("redactor", r)
-        _exige(salida, "articulo.md")
-
-        # --- vueltas de verificación / revisión --------------------------------
-        n = 1
-        while True:
-            # Comprobar el tope de coste ANTES de emitir `vuelta` y de contar
-            # esta `n` como una vuelta hecha: si una revisión anterior ya lo
-            # agotó, el verificador+novato de esta vuelta nunca se intentan,
-            # así que ni el evento `vuelta` ni `vueltas_hechas` deben existir
-            # para ella (bug real: sin este chequeo aquí, `_paso` seguía
-            # frenando a verificador/novato dentro del `gather` de más abajo,
-            # pero `vueltas_hechas = n` ya se había ejecutado para una vuelta
-            # que nunca llegó a lanzar nada).
-            _comprueba_tope(coste, tope_usd)
-            eventos.emitir("vuelta", n=n)
-
-            if n >= 2:
-                # D16: la tool `Write` real no reescribe un fichero que no se
-                # haya leído en ESTA sesión del agente -- y el novato tiene
-                # prohibido leer `dudas.md` (D2/D8), así que sin este borrado
-                # su segunda escritura (vuelta 2 en adelante) fallaría
-                # siempre. Lo mismo para `verificacion.md`/verificador, por
-                # uniformidad, aunque ahí el riesgo es menor (sí puede leer
-                # `articulo.md`... pero no su propio `verificacion.md`
-                # previo). Seguro borrarlos aquí: ya están archivados en
-                # `vueltas/<n-1>/` por la copia D13 de más abajo, que para la
-                # vuelta `n-1` ya se ejecutó en la iteración anterior de este
-                # mismo bucle -- antes de llegar aquí, nunca después.
-                for nombre in ("verificacion.md", "dudas.md"):
-                    ruta = salida / nombre
-                    if ruta.exists():
-                        ruta.unlink()
-
-            r_ver, r_nov = await asyncio.gather(
-                lanza("verificador", "verificador", VUELTA=n),
-                lanza("novato", "novato", VUELTA=n),
-                return_exceptions=True,
-            )
-            vueltas_hechas = n
-            r_ver = _resultado_o_fallo("verificador", r_ver)
-            _exige_terminado("verificador", r_ver)
-            r_nov = _resultado_o_fallo("novato", r_nov)
-            _exige_terminado("novato", r_nov)
-
-            # D16: exigir que de verdad se hayan escrito verificacion.md/
-            # dudas.md tras este lanzamiento -- en TODAS las vueltas, no solo
-            # desde la 2 (el borrado de arriba sigue siendo solo de vuelta
-            # >= 2: en la vuelta 1 no hay nada que borrar, los ficheros no
-            # existen todavía la primera vez). No hay motivo para que la
-            # vuelta 1 tolere un fichero que falta mientras las demás no: sin
-            # esta exigencia aquí, un verificador/novato que no escribe su
-            # fichero en la vuelta 1 deja `n_fallos`/`v` en `None` más abajo
-            # -- no cuenta como aprobado, así que el run sigue de largo,
-            # lanza al redactor en modo revisión y entra en una vuelta 2
-            # completa (coste real de más: redactor + verificador + novato)
-            # antes de que nada lo note, en vez de parar aquí mismo con
-            # `falta:<fichero>`.
-            _exige(salida, "verificacion.md")
-            _exige(salida, "dudas.md")
-
-            # D13: copiar verificacion.md/dudas.md a vueltas/<n>/ antes de que
-            # la vuelta siguiente los sobrescriba (en la fase 1 la vuelta 1 se
-            # perdió así); copiar los que existan, sin tocar los prompts.
-            destino = salida / "vueltas" / str(n)
-            destino.mkdir(parents=True, exist_ok=True)
-            for nombre in ("verificacion.md", "dudas.md"):
-                origen = salida / nombre
-                if origen.exists():
-                    shutil.copy2(origen, destino / nombre)
-
-            ruta_verificacion = salida / "verificacion.md"
-            ruta_dudas = salida / "dudas.md"
-            n_fallos = fallos(ruta_verificacion.read_text()) if ruta_verificacion.exists() else None
-            v = veredicto(ruta_dudas.read_text()) if ruta_dudas.exists() else None
-
-            if n_fallos == 0 and v == "listo":
-                raise _ParaRun("aprobado")
-            if n > max_vueltas:
-                raise _ParaRun("tope_vueltas")
-
-            r = await lanza("redactor", "redactor", MODO="revision")
-            _exige_terminado("redactor", r)
-            n += 1
+        await _ejecutar(ctx, lanzar, coste, tope_usd, max_vueltas, timeout_s, agentes, progreso, {})
 
     except _ParaRun as p:
         motivo = p.motivo
@@ -354,8 +512,91 @@ async def orquestar(
         fin = eventos.emitir(
             "run_fin",
             motivo=motivo,
-            vueltas=vueltas_hechas,
+            vueltas=progreso.vueltas,
             coste_total_usd=round(coste.total, 6),
+            duracion_s=time.monotonic() - inicio,
+        )
+        eventos.cerrar()
+
+    return fin
+
+
+async def reanudar(
+    salida: Path,
+    lanzar: Lanzar,
+    *,
+    tope_usd: float = 5.0,
+    max_vueltas: int | None = None,
+) -> dict:
+    """Continúa un run parado (D24): mismo directorio, mismo
+    `eventos.jsonl` (se sigue escribiendo ahí, nunca uno nuevo), sin otro
+    `run_inicio` -- solo un `reanudado`. Recorre el MISMO `_ejecutar` que
+    `orquestar`, con `hechos` poblado desde la historia anterior para que
+    cada lanzamiento ya hecho se salte sin gastar ni emitir nada (D24) y
+    cada paso que sí se relanza de verdad borre antes lo que va a crear
+    (D25).
+
+    `tope_usd` se compara contra lo gastado EN ESTA continuación (el
+    `_Coste` de `_ejecutar` arranca en 0, igual que en un run nuevo); el
+    `coste_total_usd` del `run_fin` nuevo es `coste_previo_usd` + eso.
+    """
+    ruta_eventos = salida / "eventos.jsonl"
+    lineas = [l for l in ruta_eventos.read_text().splitlines() if l.strip()]
+    eventos_previos = [json.loads(l) for l in lineas]
+    if not eventos_previos or eventos_previos[-1].get("tipo") != "run_fin":
+        raise ValueError(f"{ruta_eventos}: no termina en run_fin, no se puede continuar")
+    run_fin_previo = eventos_previos[-1]
+    if run_fin_previo.get("motivo") == "aprobado":
+        raise ValueError(f"{ruta_eventos}: ya está aprobado, nada que continuar")
+
+    run_inicio = next(e for e in eventos_previos if e.get("tipo") == "run_inicio")
+    repo = Path(run_inicio["repo"])
+    params_previos = dict(run_inicio.get("params") or {})
+    timeout_s = params_previos.get("timeout_s", 600)
+    max_turns = params_previos.get("max_turns", 60)
+    if max_vueltas is None:
+        max_vueltas = params_previos.get("max_vueltas", 2)
+
+    hechos = _lanzamientos_hechos(eventos_previos, salida)
+    coste_previo_usd = round(
+        sum(e.get("coste_usd") or 0 for e in eventos_previos if e.get("tipo") == "fin_agente"), 6
+    )
+
+    eventos = Eventos(ruta_eventos, run_inicio["run"])
+    inicio = time.monotonic()
+    coste = _Coste()
+    progreso = _Progreso()
+    motivo = "excepcion:desconocido"
+
+    try:
+        agentes = {rol: cargar(rol) for rol in ROLES}
+        params_efectivos = {**params_previos, "max_vueltas": max_vueltas, "tope_usd": tope_usd}
+        # D24: nunca otro `run_inicio` -- un único `reanudado` basta para que
+        # la pantalla sepa que el run sigue siendo el mismo.
+        eventos.emitir(
+            "reanudado",
+            params=params_efectivos,
+            coste_previo_usd=coste_previo_usd,
+            desde=run_fin_previo.get("motivo"),
+        )
+        ctx = Contexto(repo=repo, salida=salida, eventos=eventos, timeout_s=timeout_s, max_turns=max_turns)
+        await _ejecutar(ctx, lanzar, coste, tope_usd, max_vueltas, timeout_s, agentes, progreso, hechos)
+
+    except _ParaRun as p:
+        motivo = p.motivo
+    except asyncio.CancelledError:
+        motivo = "interrumpido"
+        raise
+    except Exception as e:
+        motivo = f"excepcion:{type(e).__name__}"
+        obtener_log().exception("reanudar: excepción no prevista")
+        raise
+    finally:
+        fin = eventos.emitir(
+            "run_fin",
+            motivo=motivo,
+            vueltas=progreso.vueltas,
+            coste_total_usd=round(coste_previo_usd + coste.total, 6),
             duracion_s=time.monotonic() - inicio,
         )
         eventos.cerrar()
@@ -370,7 +611,9 @@ def _crear_analizador() -> argparse.ArgumentParser:
     `--salidas` en pruebas sin invocar una orquestación real.
     """
     analizador = argparse.ArgumentParser(prog="python -m enjambre.orquestar")
-    analizador.add_argument("--repo", required=True, type=Path)
+    # `--repo` ya no es `required`: con `--reanudar` no hace falta (sale del
+    # `run_inicio` del propio run) -- `main()` exige uno de los dos a mano.
+    analizador.add_argument("--repo", type=Path, default=None)
     # Absoluto y relativo a este fichero (no al cwd): invocar el módulo desde
     # fuera de la raíz del repo no debe desviar las salidas a <cwd>/salidas.
     # parent = enjambre/, parent.parent = raíz del repo.
@@ -378,7 +621,10 @@ def _crear_analizador() -> argparse.ArgumentParser:
         "--salidas", type=Path, default=Path(__file__).resolve().parent.parent / "salidas"
     )
     analizador.add_argument("--tope-usd", type=float, default=5.0)
-    analizador.add_argument("--max-vueltas", type=int, default=2)
+    # `None` (no 2) por defecto: así `main()` distingue "no se pasó" de "se
+    # pasó 2" -- con `--reanudar`, "no se pasó" significa heredar el
+    # `max_vueltas` del `run_inicio` anterior (D24), no forzar 2.
+    analizador.add_argument("--max-vueltas", type=int, default=None)
     analizador.add_argument("--timeout", type=float, default=600.0)
     analizador.add_argument("--falso", action="store_true")
     # Anexo 2026-10-04, Tarea 15 (D21): lo fija `pantalla.py` al lanzar un
@@ -388,12 +634,76 @@ def _crear_analizador() -> argparse.ArgumentParser:
     # antes de que exista. Sin él, igual que siempre (`orquestar()` lo
     # genera a partir de la hora actual).
     analizador.add_argument("--run", default=None)
+    # D24 (Tarea 17): continuar un run parado. Excluye --repo/--run/--falso
+    # (todos ellos salen del propio run) -- `main()` lo valida a mano porque
+    # la exclusión depende de cuál de los dos modos se use, no de un grupo
+    # fijo de argparse.
+    analizador.add_argument("--reanudar", type=Path, default=None)
     return analizador
 
 
+def _falso_del_run(salida: Path) -> bool | None:
+    """Lee `params.falso` del `run_inicio` de `salida/eventos.jsonl`.
+    `None` si el fichero no se puede leer/parsear o el run es anterior a
+    D24 (sin esa clave) -- en los dos casos, `main()` sale con código 2:
+    no se adivina si un run viejo gastaba de verdad."""
+    try:
+        lineas = [l for l in (salida / "eventos.jsonl").read_text().splitlines() if l.strip()]
+        eventos_previos = [json.loads(l) for l in lineas]
+        run_inicio = next(e for e in eventos_previos if e.get("tipo") == "run_inicio")
+    except (OSError, json.JSONDecodeError, StopIteration):
+        return None
+    params = run_inicio.get("params") or {}
+    return params["falso"] if "falso" in params else None
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI: `python -m enjambre.orquestar --repo <ruta> [--falso]`."""
+    """CLI: `python -m enjambre.orquestar --repo <ruta> [--falso]`, o
+    `python -m enjambre.orquestar --reanudar <salida>` para continuar un run
+    parado (D24)."""
     args = _crear_analizador().parse_args(argv)
+
+    if args.reanudar is not None:
+        if args.repo is not None or args.run is not None or args.falso:
+            print("--reanudar excluye --repo, --run y --falso", file=sys.stderr)
+            return 2
+
+        es_falso = _falso_del_run(args.reanudar)
+        if es_falso is None:
+            print(
+                f"--reanudar {args.reanudar}: no tiene params.falso (run anterior a D24) -- "
+                "no se puede saber si era real o --falso, así que no se continúa a ciegas",
+                file=sys.stderr,
+            )
+            return 2
+        if es_falso:
+            from enjambre.falso import hacer_lanzar_falso
+
+            lanzar = hacer_lanzar_falso(retardo_s=0.5)
+        else:
+            from enjambre.lanzador import lanzar
+
+        try:
+            fin = asyncio.run(
+                reanudar(args.reanudar, lanzar, tope_usd=args.tope_usd, max_vueltas=args.max_vueltas)
+            )
+        except KeyboardInterrupt:
+            print(f"{args.reanudar} interrumpido")
+            return 130
+        except ValueError as e:
+            print(f"--reanudar {args.reanudar}: {e}", file=sys.stderr)
+            return 2
+
+        print(f"{fin['run']} {fin['motivo']} {fin['vueltas']} {fin['coste_total_usd']} {args.reanudar}")
+        if fin["motivo"] == "aprobado":
+            return 0
+        if fin["motivo"] == "interrumpido":
+            return 130
+        return 1
+
+    if args.repo is None:
+        print("--repo es obligatorio (salvo con --reanudar)", file=sys.stderr)
+        return 2
 
     if args.falso:
         # Modo de demo/desarrollo: cero llamadas a la API, cero tokens.
@@ -414,9 +724,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.salidas,
                 lanzar,
                 tope_usd=args.tope_usd,
-                max_vueltas=args.max_vueltas,
+                max_vueltas=args.max_vueltas if args.max_vueltas is not None else 2,
                 timeout_s=args.timeout,
                 run=args.run,
+                falso=args.falso,
             )
         )
     except KeyboardInterrupt:

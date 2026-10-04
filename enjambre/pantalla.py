@@ -123,6 +123,33 @@ def _valida_lanzar(cuerpo: dict, raiz_repos: Path) -> tuple[Path, float, int, bo
     return repo_path, float(tope_usd), max_vueltas, falso
 
 
+def _valida_reanudar_campos(cuerpo: dict) -> tuple[str, str, float, int] | str:
+    """Valida los campos de `POST /api/reanudar` (D24, anexo 2026-10-04 (3))
+    que no necesitan tocar el disco: `repo`/`run` son el NOMBRE corto de
+    cada uno bajo `salidas/` (a diferencia de `/api/lanzar`, cuyo `repo` es
+    una ruta de verdad bajo `raiz_repos` -- aquí ya existe el run, así que
+    basta con el mismo par que usa `/api/runs`). `tope_usd`/`max_vueltas`
+    con los mismos límites que `_valida_lanzar`. Devuelve `(repo, run,
+    tope_usd, max_vueltas)` o un string con el motivo (400) -- los demás
+    códigos (404/409) dependen del disco y los decide `_reanudar`."""
+    repo = cuerpo.get("repo")
+    if not isinstance(repo, str) or not repo:
+        return "repo debe ser un nombre no vacío"
+    run = cuerpo.get("run")
+    if not isinstance(run, str) or not run:
+        return "run debe ser un nombre no vacío"
+
+    tope_usd = cuerpo.get("tope_usd")
+    if isinstance(tope_usd, bool) or not isinstance(tope_usd, (int, float)) or not (0 < tope_usd <= 10):
+        return "tope_usd debe ser un número mayor que 0 y como mucho 10"
+
+    max_vueltas = cuerpo.get("max_vueltas")
+    if isinstance(max_vueltas, bool) or not isinstance(max_vueltas, int) or not (0 <= max_vueltas <= 3):
+        return "max_vueltas debe ser un entero entre 0 y 3"
+
+    return repo, run, float(tope_usd), max_vueltas
+
+
 def _listar_runs(salidas: Path) -> list[dict]:
     """`/api/runs`: un run es `salidas/<repo>/<run>/eventos.jsonl`. `inicio`
     es el `t` del primer evento (normalmente `run_inicio`); `motivo` es el
@@ -213,7 +240,7 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         preflight falla antes de que el navegador llegue a mandar el POST
         de verdad."""
         ruta = urllib.parse.urlsplit(self.path).path
-        if ruta not in ("/api/lanzar", "/api/parar"):
+        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar"):
             self.send_error(404)
             return
 
@@ -224,8 +251,10 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
 
         if ruta == "/api/lanzar":
             self._lanzar()
-        else:
+        elif ruta == "/api/parar":
             self._parar()
+        else:
+            self._reanudar()
 
     def _responde_json(self, status: int, cuerpo: dict) -> None:
         datos = json.dumps(cuerpo).encode("utf-8")
@@ -301,6 +330,90 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             self.server.proc_run = run  # type: ignore[attr-defined]
 
         self._responde_json(202, {"repo": repo_path.name, "run": run})
+
+    def _reanudar(self) -> None:
+        """`POST /api/reanudar` (D24, anexo 2026-10-04 (3)): mismo patrón de
+        validación en capas que `_lanzar` -- formato (400) antes de tocar
+        disco, existencia (404) antes de leer, estado del run (409) antes de
+        mirar si ya hay un proceso en marcha (409, misma ranura que
+        `_lanzar`). El modo (`--falso` o real) lo decide el propio run
+        (`params.falso`), nunca quien llama a este endpoint."""
+        longitud = int(self.headers.get("Content-Length") or 0)
+        crudo = self.rfile.read(longitud) if longitud > 0 else b""
+        try:
+            cuerpo = json.loads(crudo) if crudo else {}
+        except json.JSONDecodeError:
+            self._responde_json(400, {"error": "cuerpo no es JSON válido"})
+            return
+        if not isinstance(cuerpo, dict):
+            self._responde_json(400, {"error": "cuerpo debe ser un objeto JSON"})
+            return
+
+        validado = _valida_reanudar_campos(cuerpo)
+        if isinstance(validado, str):
+            self._responde_json(400, {"error": validado})
+            return
+        repo, run, tope_usd, max_vueltas = validado
+
+        salida = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
+        if salida is None or not (salida / "eventos.jsonl").is_file():
+            self._responde_json(404, {"error": "ese run no existe"})
+            return
+
+        try:
+            lineas = [l for l in (salida / "eventos.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+            eventos_previos = [json.loads(l) for l in lineas]
+        except (OSError, ValueError, json.JSONDecodeError):
+            self._responde_json(409, {"error": "no se pudo leer el eventos.jsonl de ese run"})
+            return
+        if not eventos_previos or eventos_previos[-1].get("tipo") != "run_fin":
+            self._responde_json(409, {"error": "ese run no termina en run_fin"})
+            return
+        if eventos_previos[-1].get("motivo") == "aprobado":
+            self._responde_json(409, {"error": "ese run ya está aprobado"})
+            return
+        run_inicio = next((e for e in eventos_previos if e.get("tipo") == "run_inicio"), None)
+        params_previos = (run_inicio or {}).get("params") or {}
+        if "falso" not in params_previos:
+            self._responde_json(409, {"error": "ese run es anterior a D24 (sin params.falso)"})
+            return
+
+        with self.server.lock:  # type: ignore[attr-defined]
+            proc = self.server.proc  # type: ignore[attr-defined]
+            if proc is not None and proc.poll() is None:
+                self._responde_json(409, {"error": "ya hay un run en marcha"})
+                return
+
+            args = [
+                "--reanudar",
+                str(salida),
+                "--tope-usd",
+                str(tope_usd),
+                "--max-vueltas",
+                str(max_vueltas),
+            ]
+            if params_previos["falso"]:
+                args.append("--falso")
+            argv = self.server.comando(args)  # type: ignore[attr-defined]
+
+            dir_logs = self.server.dir_logs  # type: ignore[attr-defined]
+            dir_logs.mkdir(parents=True, exist_ok=True)
+            # "ab" (no "wb" como `_lanzar`): este run ya tenía un log de su
+            # primer tramo -- se añade, no se pisa.
+            with open(dir_logs / f"{run}.log", "ab") as log_fh:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=_RAIZ_ENJAMBRE,
+                    start_new_session=True,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                )
+            self.server.proc = proc  # type: ignore[attr-defined]
+            self.server.proc_lanzado_en = time.monotonic()  # type: ignore[attr-defined]
+            self.server.proc_repo = repo  # type: ignore[attr-defined]
+            self.server.proc_run = run  # type: ignore[attr-defined]
+
+        self._responde_json(202, {"repo": repo, "run": run})
 
     def _parar(self) -> None:
         with self.server.lock:  # type: ignore[attr-defined]
@@ -535,7 +648,24 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                     except json.JSONDecodeError:
                         tipo = None
                     if tipo == "run_fin":
-                        return
+                        # D24 (anexo 2026-10-04 (3)): si hay un proceso en
+                        # marcha para este MISMO (repo, run) -- una
+                        # continuación lanzada por `/api/reanudar` mientras
+                        # este directo seguía abierto -- no se cierra: el
+                        # mismo `eventos.jsonl` va a seguir creciendo (un
+                        # `reanudado` y lo que venga después) y cerrar aquí
+                        # dejaría al navegador sin verlo. Para cualquier otro
+                        # caso (el run de verdad ha terminado, o el proceso
+                        # en marcha es de OTRO run), cierra igual que antes.
+                        proc = self.server.proc  # type: ignore[attr-defined]
+                        sigue_en_marcha = (
+                            proc is not None
+                            and proc.poll() is None
+                            and repo == self.server.proc_repo  # type: ignore[attr-defined]
+                            and run == self.server.proc_run  # type: ignore[attr-defined]
+                        )
+                        if not sigue_en_marcha:
+                            return
 
 
 def crear_servidor(

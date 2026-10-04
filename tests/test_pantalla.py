@@ -1,5 +1,6 @@
 import json
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -307,3 +308,130 @@ def test_lanzar_sin_cabeceras_es_403(lanzador):
 def test_parar_sin_run_es_409(lanzador):
     base, _, _ = lanzador
     assert _post(base + "/api/parar")[0] == 409
+
+
+# ---------------------------------------------------------------------------
+# Anexo 2026-10-04 (3), Tarea 17 (D24): continuar un run parado. Fixture y
+# pruebas literales del plan.
+# ---------------------------------------------------------------------------
+
+
+def _run_parado(salidas, repo, motivo="tope_coste", falso=True, run="agora-1"):
+    d = salidas / "agora" / run
+    d.mkdir(parents=True)
+    params = {"tope_usd": 1, "max_vueltas": 2, "timeout_s": 600, "max_turns": 60}
+    if falso is not None:
+        params["falso"] = falso
+    evs = [
+        {"t": "2026-10-04T10:00:00.000", "run": run, "tipo": "run_inicio", "repo": str(repo), "salida": str(d), "params": params},
+        {"t": "2026-10-04T10:01:00.000", "run": run, "tipo": "run_fin", "motivo": motivo, "vueltas": 0, "coste_total_usd": 1.01, "duracion_s": 60},
+    ]
+    (d / "eventos.jsonl").write_text("".join(json.dumps(e) + "\n" for e in evs))
+    return d
+
+
+@pytest.fixture
+def reanudador(tmp_path):
+    salidas, est, raiz = tmp_path / "salidas", tmp_path / "pantalla", tmp_path / "data"
+    salidas.mkdir(); est.mkdir(); (raiz / "agora").mkdir(parents=True)
+    (est / "index.html").write_text("x")
+    marca, vistos = tmp_path / "marca.txt", []
+
+    def comando(args):
+        vistos.append(args)
+        return [sys.executable, "-c", _FALSO, str(marca)]
+
+    s = crear_servidor("127.0.0.1", 0, salidas, est, raiz_repos=raiz, comando=comando, dir_logs=tmp_path / "logs")
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{s.server_address[1]}", salidas, raiz, vistos
+    _post(f"http://127.0.0.1:{s.server_address[1]}/api/parar")
+    s.shutdown()
+
+
+def test_reanudar_lanza_con_el_modo_del_run(reanudador):
+    base, salidas, raiz, vistos = reanudador
+    d = _run_parado(salidas, raiz / "agora")
+    codigo, r = _post(base + "/api/reanudar", {"repo": "agora", "run": "agora-1", "tope_usd": 2, "max_vueltas": 2})
+    assert codigo == 202 and r == {"repo": "agora", "run": "agora-1"}
+    args = vistos[-1]
+    assert args[args.index("--reanudar") + 1] == str(d)
+    assert float(args[args.index("--tope-usd") + 1]) == 2
+    assert "--falso" in args
+
+
+@pytest.mark.parametrize("motivo,falso,extra,esperado", [
+    ("aprobado", True, {}, 409),
+    ("tope_coste", None, {}, 409),
+    ("tope_coste", True, {"tope_usd": 50}, 400),
+    ("tope_coste", True, {"run": "no-existe"}, 404),
+])
+def test_reanudar_rechaza(reanudador, motivo, falso, extra, esperado):
+    base, salidas, raiz, _ = reanudador
+    _run_parado(salidas, raiz / "agora", motivo=motivo, falso=falso)
+    cuerpo = {"repo": "agora", "run": "agora-1", "tope_usd": 2, "max_vueltas": 2, **extra}
+    assert _post(base + "/api/reanudar", cuerpo)[0] == esperado
+
+
+def test_directo_no_cierra_en_run_fin_si_sigue_en_marcha_el_mismo_run(tmp_path):
+    """Prueba de regresión propia (no está en el plan, Paso 2 la pide):
+    `_servir_directo` cerraba el SSE en cuanto veía CUALQUIER `run_fin`, sin
+    mirar si el servidor tenía un proceso en marcha para ese mismo (repo,
+    run) -- con D24, una continuación lanzada mientras el directo del
+    primer tramo sigue abierto encontraría la conexión ya cerrada por el
+    cliente antes de que el `reanudado` (y lo que venga después) llegara a
+    verse. Se monta el `server.proc` a mano (un subproceso real, para que
+    `.poll()` se comporte de verdad) en vez de pasar por `/api/reanudar`:
+    aísla la prueba a la única costura que toca esta tarea en
+    `_servir_directo`, sin depender de que `_reanudar` también acierte."""
+    salidas, est = tmp_path / "salidas", tmp_path / "pantalla"
+    run_dir = salidas / "agora" / "r1"
+    run_dir.mkdir(parents=True); est.mkdir()
+    (est / "index.html").write_text("x")
+    (run_dir / "eventos.jsonl").write_text('{"t":"2026-10-04T00:00:00.000","run":"r1","tipo":"run_inicio"}\n')
+
+    s = crear_servidor("127.0.0.1", 0, salidas, est)
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{s.server_address[1]}"
+
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    s.proc, s.proc_repo, s.proc_run = proc, "agora", "r1"
+
+    recibidas = []
+
+    def leer():
+        with urllib.request.urlopen(base + "/api/directo/agora/r1", timeout=10) as r:
+            for linea in r:
+                if linea.startswith(b"data: "):
+                    recibidas.append(json.loads(linea[6:]))
+
+    h = threading.Thread(target=leer)
+    h.start()
+    try:
+        time.sleep(0.3)
+        with open(run_dir / "eventos.jsonl", "a") as f:
+            f.write('{"t":"x","run":"r1","tipo":"run_fin","motivo":"tope_coste"}\n')
+            f.flush()
+        time.sleep(0.8)
+        # El primer run_fin NO cerró el hilo: el proceso en marcha es este
+        # mismo (repo, run).
+        assert h.is_alive()
+
+        with open(run_dir / "eventos.jsonl", "a") as f:
+            f.write('{"t":"y","run":"r1","tipo":"reanudado","desde":"tope_coste"}\n')
+            f.flush()
+        time.sleep(0.8)
+        assert [e["tipo"] for e in recibidas] == ["run_inicio", "run_fin", "reanudado"]
+
+        proc.terminate()
+        proc.wait(timeout=5)
+        with open(run_dir / "eventos.jsonl", "a") as f:
+            f.write('{"t":"z","run":"r1","tipo":"run_fin","motivo":"aprobado"}\n')
+            f.flush()
+        h.join(timeout=5)
+        assert not h.is_alive()
+        assert [e["tipo"] for e in recibidas] == ["run_inicio", "run_fin", "reanudado", "run_fin"]
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        s.shutdown()
