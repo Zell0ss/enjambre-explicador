@@ -32,4 +32,13 @@ subproceso `python -m enjambre.orquestar` aparte y salta a verlo en directo,
 con un botón Parar mientras sigue en marcha. El repo tiene que estar bajo
 `/data` (ver `enjambre/pantalla.py`, `crear_servidor(..., raiz_repos=...)`).
 
+Un run en marcha (directo o repetición) se ve como **la mesa de papeles**
+(D22): una rejilla de tarjetas HTML en el orden del flujo (cartógrafo,
+despiezador, lectores, trazador, redactor, verificador, novato), cada una
+con su sprite animado, lo que lee/escribe ahora y las fichas que deja
+(clic abre su contenido). Debajo, el panel "Ahora" (qué lee cada agente
+activo), la bitácora y las puertas del guardia, que se encienden en rojo
+(ámbar la del verificador) con cada denegado/salto. Ver
+`pantalla/mesa.js`.
+
 Ver `CLAUDE.md` para contexto arquitectónico.

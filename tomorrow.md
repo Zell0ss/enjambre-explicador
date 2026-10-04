@@ -2,11 +2,13 @@
 
 ## Estado
 
-**Tareas 1-12, 14 y 15: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del plan)
-y pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Dio el visto bueno a la Tarea 14
-("sigue siigue") tras pedir dos retoques rápidos (bitácora el doble de ancha; fuera la fuente
-de mapa de bits propia, VT323 en su lugar). Tarea 15 (lanzar desde la página) cerrada. Queda
-la Tarea 13 (Aceptación, H6), que lanza Josem.
+**Tareas 1-12, 14, 15 y 16: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del
+plan) y pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Dio el visto bueno a la
+Tarea 14 ("sigue siigue") tras pedir dos retoques rápidos (bitácora el doble de ancha; fuera la
+fuente de mapa de bits propia, VT323 en su lugar). Tarea 15 (lanzar desde la página) cerrada.
+**Tarea 16 (D22/D23, "la mesa de papeles") cerrada**: sustituye la escena única de personajes
+(D20) por una rejilla de tarjetas HTML en el orden del flujo -- ver la sección propia más abajo.
+Queda la Tarea 13 (Aceptación, H6), que lanza Josem.
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
@@ -211,6 +213,83 @@ la Tarea 13 (Aceptación, H6), que lanza Josem.
 **Fin de H5b.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** — no hay más trabajo
 de implementación pendiente del plan de fase 2 por mi parte salvo lo que salga de esa
 aceptación o más pulido visual que Josem pida.
+
+### Tarea 16 — la mesa de papeles (D22/D23), Paso 4 y 5
+
+Pasos 1-3 (D23 en el lanzador, el reductor de `estado.js`, `--falso` ejercitando la mesa) ya
+estaban hechos y comiteados antes de esta sesión (commits `4165c68`, `008fe03`, `d11c889`).
+Este commit es el Paso 4 (la vista) + Paso 5 (prueba manual).
+
+`pantalla/escena.js` (D20, un único `<canvas>` con personajes) se sustituye por
+`pantalla/mesa.js`: rejilla CSS de 4 columnas en el orden del flujo (cartógrafo/despiezador en
+la 1, lectores en la 2 ocupando las dos filas, trazador/redactor en la 3,
+verificador/novato en la 4), cada tarjeta con su `<canvas>` propio (sprite ×3 entero, ×2 en las
+filas de lectores, `image-rendering: pixelated`, tamaño intrínseco = tamaño del sprite y escala
+por CSS, sin JS de resize dinámico porque la escala es siempre entera fija). Todo el texto
+(nombres, bocadillos, fichas, puertas, "Ahora") pasa a ser HTML normal, no dibujado en canvas.
+
+**Decisiones de diseño no explícitas en el plan:**
+
+- **Flechas SVG**: un `<svg id="flechas">` superpuesto (`position:absolute`, `pointer-events:
+  none`) sobre `#mesa`. La TOPOLOGÍA (qué tarjeta conecta con cuál, por qué lado) está fija en
+  código -- la rejilla de 4 columnas es un layout fijo del plan, no arbitrario -- pero las
+  COORDENADAS se leen siempre de `getBoundingClientRect()` de las tarjetas reales en
+  `_recalcularFlechas`, nunca de píxeles literales. Se recalcula en cada `_render` (barato: 7
+  rects) y además en `resize` de ventana (para cuando la repetición está en pausa y `_render`
+  no se vuelve a llamar solo). Las dos flechas de "vuelta" (verificador/novato → redactor)
+  llevan trazo discontinuo ámbar y marcador de punta propio, distinto del gris de las flechas
+  de ida, con una única etiqueta "vuelta n/max" compartida entre las dos (no duplicada) en el
+  punto donde convergen.
+- **Encendido a 500ms reales mínimo** (papel y puertas): `_estaEncendida(mapa, clave, marca,
+  ahoraMs)` es una única función compartida por fichas y puertas (no dos implementaciones). Lleva
+  un mapa `clave -> {marca, inicioReal}`; cuando la condición VIRTUAL (edad respecto a
+  `ahoraMs` < 3000ms) se cumple por primera vez o se renueva (la `marca` cambia, es una lectura
+  o un denegado nuevo), apunta `performance.now()`; mientras no hayan pasado 500ms reales desde
+  ahí, sigue "encendida" aunque la condición virtual ya no se cumpla -- así ×4/×16 no deja
+  pasar el encendido sin pintar ni un fotograma.
+- **Panel "Ahora", tope de 3**: se eligen los primeros 3 agentes activos (`leyendo`/
+  `escribiendo`) en el orden de inserción de `estado.agentes`, que es el orden REAL de
+  lanzamiento del run (cada rol se crea en `run_inicio`/`lanzado` en ese orden) -- no había un
+  criterio "más urgente" más significativo que ese para un POC pensado para enseñar el avance
+  del flujo.
+- **`fuente-pixel.js` y las funciones VT323-en-canvas de `sprites.js`** (`dibujarTexto`,
+  `medirTexto`, `cargarFuenteTexto`, `FUENTE_CSS`, `ANCHO_GLIFO`, `ALTO_GLIFO`): con todo el
+  texto de la mesa en HTML, `mesa.js` no las llama. El plan (Tarea 16, "Ficheros") decía borrar
+  `fuente-pixel.js` si quedaba sin uso; pero Josem pidió explícitamente, en esta misma sesión,
+  NO borrar código que funciona y podría reutilizarse ("lo usaremos para algo") -- se aplicó
+  ese mismo criterio aquí: ninguno de los dos se borra, se quedan sin llamador.
+- **Firma de `arrancar`**: cambia de `arrancar(lienzo, cabecera)` (el `<canvas>` único de D20)
+  a `arrancar(mesaEl, cabecera)` (el contenedor `<div id="mesa">`) -- ya no hay un solo lienzo
+  que escalar/pasar; el resto de elementos (controles, paneles) se siguen buscando por id,
+  mismo acoplamiento documentado que ya tenía `escena.js` con `index.html`.
+
+**Verificación visual real** (servidor efímero en `127.0.0.1:8801` + Chrome headless vía CDP
+crudo, WebSocket/fetch nativos de Node, sin Playwright):
+
+1. `docs/capturas/tarea16-mitad-lectores.png` -- repetición de `agora/agora-20261003-1444`,
+   barra en el evento 135 (mitad de los lectores). Confirmado a ojo: panel "Ahora" con
+   lecturas reales de 3 agentes + "+1"; 7 filas de lectores con su sprite, estado y ficha
+   (varias con fichero ya escrito, subrayado, clicable); las 4 tarjetas de los roles únicos
+   con su sprite, estado, modelo y (cartógrafo/despiezador) duración+coste; 10 elementos
+   `<path>` en `#flechas` (8 flechas + 2 puntas de marcador), arrancando de los bordes reales
+   de las tarjetas; franja de puertas con los 4 contadores, "los demás" en `n=1` (hubo un
+   denegado real en este run), verificador con borde discontinuo.
+2. `docs/capturas/tarea16-falso-puertas.png` -- run `--falso` lanzado por mí
+   (`tarea16-verif-1791141412`, limpiado después de la captura), barra en el evento 82 (justo
+   tras el `denegado` del redactor que sigue a sus tres lecturas de fichas). Confirmado a ojo:
+   la tarjeta del redactor con borde resaltado (`leyendo`); la puerta "Redactor" en rojo con el
+   texto exacto `Read backend/servicio.py — el redactor no ve el repo (D2) -- teatro de demo,
+   --falso`; a la vez, las tres fichas `fichas/a-uno.md`/`b-dos.md`/`c-tres.md` en la tarjeta de
+   Lectores con fondo ámbar (encendidas) y tooltip `leído por: trazador, redactor` -- puerta y
+   papel encendidos simultáneamente, como pide el punto 4/7 del encargo.
+3. Apilado: mismo run/evento a 800px de ancho. `scrollWidth === clientWidth` (sin scroll
+   horizontal), `#flechas` con `display:none` (oculto, no recalculado -- decisión documentada
+   en `mesa.js`), orden visual de las tarjetas confirmado por CSS `order`: cartógrafo,
+   despiezador, lectores, trazador, redactor, verificador, novato (el mismo orden del flujo).
+
+`node --check` de los tres `.js` tocados, `node --test tests/js/*.mjs` (18/18, sin tocar
+`estado.js` ni su test) y `.venv/bin/pytest -q` (143/143, sin tocar nada Python) en verde antes
+del commit.
 
 ### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 

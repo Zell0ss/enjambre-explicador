@@ -4,11 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>enjambre — pantalla</title>
-<!-- D20 punto 6: fuente VT323 (Google Fonts) para el panel de bitácora e
-     inventario que sale del lienzo. Si la red no la trae (offline, bloqueo
-     de terceros), la hoja de abajo cae a monospace vía
-     font-family: "VT323", monospace -- nunca una fuente sin servir rompe el
-     panel, solo cambia su aspecto. -->
+<!-- D20/D22 punto 6: fuente VT323 (Google Fonts) para todo el texto de la
+     mesa (tarjetas, "Ahora", bitácora, puertas) -- ya no hay texto dibujado
+     a mano en un <canvas>, solo HTML normal. Si la red no la trae (offline,
+     bloqueo de terceros), la hoja de abajo cae a monospace vía
+     font-family: "VT323", monospace -- nunca una fuente sin servir rompe la
+     mesa, solo cambia su aspecto. -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
@@ -24,14 +25,10 @@
     font-family: "Courier New", "DejaVu Sans Mono", monospace;
     font-size: 14px;
   }
-  /* Cualquier regla de autor con `display` explícito (.zona-lienzo,
-     .controles...) pisa el `[hidden]{display:none}` de la hoja por defecto
-     del navegador -- es la propia cascada CSS (origen de autor > agente de
-     usuario, con independencia de especificidad), no un despiste de cada
-     clase suelta. Una sola regla aquí, con la máxima prioridad posible,
-     resuelve el problema para TODO el documento de una vez (encontrado
-     probando el modo directo, Tarea 12: `controles.hidden = true` no
-     ocultaba nada pese a aplicarse). */
+  /* Cualquier regla de autor con `display` explícito pisa el
+     `[hidden]{display:none}` de la hoja por defecto del navegador -- una
+     sola regla aquí, con la máxima prioridad posible, resuelve el problema
+     para TODO el documento de una vez (Tarea 12). */
   [hidden] {
     display: none !important;
   }
@@ -58,6 +55,9 @@
   }
   main {
     width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    box-sizing: border-box;
   }
   .lista-runs ul {
     list-style: none;
@@ -76,32 +76,337 @@
   .lista-runs a:hover {
     text-decoration: underline;
   }
-  .zona-lienzo {
+
+  /* ------------------------------------------------------------------- *
+   * D22: la mesa de papeles -- rejilla de 4 columnas en el orden del
+   * flujo (Tarea 16, §5.5). Sustituye por completo al <canvas> de escena
+   * única (D20) y a los bocadillos/loro/panel de inventario aparte.
+   * ------------------------------------------------------------------- */
+  .zona-mesa {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    gap: 14px;
+    width: 100%;
+  }
+  .mesa-wrap {
+    position: relative;
+  }
+  .mesa {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 30px 44px;
+    align-items: start;
+  }
+  /* Posiciones lógicas de rejilla (punto 1): cartógrafo arriba/despiezador
+     abajo en la columna 1; lectores en la 2, ocupando las dos filas;
+     trazador/redactor en la 3; verificador/novato en la 4. */
+  .carta[data-rol="cartografo"] { grid-column: 1; grid-row: 1; }
+  .carta[data-rol="despiezador"] { grid-column: 1; grid-row: 2; }
+  .carta[data-rol="lector-de-pieza"] { grid-column: 2; grid-row: 1 / 3; }
+  .carta[data-rol="trazador"] { grid-column: 3; grid-row: 1; }
+  .carta[data-rol="redactor"] { grid-column: 3; grid-row: 2; }
+  .carta[data-rol="verificador"] { grid-column: 4; grid-row: 1; }
+  .carta[data-rol="novato"] { grid-column: 4; grid-row: 2; }
+
+  .carta {
+    position: relative;
+    z-index: 2;
+    background: #1a2230;
+    border: 2px solid #333c4a;
+    border-radius: 4px;
+    padding: 8px;
+    box-sizing: border-box;
+    font-family: "VT323", monospace;
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  /* Borde resaltado si leyendo/escribiendo; rojo si bloqueado (punto 2). */
+  .carta--activa {
+    border-color: #f2d06b;
+    box-shadow: 0 0 6px rgba(242, 208, 107, 0.4);
+  }
+  .carta--bloqueada {
+    border-color: #c23b3b;
+    box-shadow: 0 0 6px rgba(194, 59, 59, 0.5);
+  }
+  .carta-titulo {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-family: "Courier New", "DejaVu Sans Mono", monospace;
+    color: #f2d06b;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .carta-subtitulo {
+    color: #8fa0b8;
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 12px;
+  }
+  .carta-cabeza {
+    display: flex;
     gap: 8px;
+    align-items: flex-start;
   }
-  .lienzo-wrap {
-    /* El contenedor no fija tamaño: escena.js pone el width/height en px
-       del propio <canvas>, calculado al mayor entero que quepa. */
-    max-width: 100%;
-    overflow: auto;
-  }
-  #lienzo {
-    display: block;
+  .carta-sprite,
+  .fila-lector-sprite {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    background: #000;
-    border: 1px solid #333c4a;
+    flex: 0 0 auto;
+    background: #0a0e1a;
   }
+  .carta-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .carta-estado {
+    color: #e8e0c8;
+  }
+  .carta-modelo {
+    color: #8fa0b8;
+    font-size: 13px;
+  }
+  .carta-fin {
+    color: #a9e88f;
+    font-size: 13px;
+  }
+  .carta-ahora {
+    margin-top: 6px;
+    min-height: 1.3em;
+    word-break: break-word;
+  }
+  .carta-fichas,
+  .fila-lector-fichas {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+  }
+  .carta-fichas li,
+  .fila-lector-fichas li {
+    padding: 1px 0;
+  }
+  .ficha {
+    background: none;
+    border: none;
+    color: #8fd0e8;
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 1px 2px;
+    text-align: left;
+    word-break: break-all;
+  }
+  .ficha:hover {
+    color: #c9a0e8;
+  }
+  /* Punto 4: "el papel se enciende" cuando se ha leído hace poco. */
+  .ficha--encendida {
+    background: rgba(242, 208, 107, 0.25);
+    color: #f2e08a;
+    border-radius: 2px;
+  }
+
+  /* Tarjeta de lectores (punto 3): filas dentro, sprite ×2. */
+  .carta-lectores {
+    display: flex;
+    flex-direction: column;
+  }
+  .filas-lectores {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 560px;
+    overflow-y: auto;
+  }
+  .fila-lector {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+    border-top: 1px solid #222a35;
+    padding-top: 4px;
+  }
+  .fila-lector:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+  .fila-lector--activa {
+    outline: 1px solid #f2d06b;
+  }
+  .fila-lector--bloqueada {
+    outline: 1px solid #c23b3b;
+  }
+  .fila-lector-datos {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .fila-lector-estado {
+    font-size: 13px;
+    color: #8fa0b8;
+  }
+
+  /* Flechas SVG (punto 1): overlay sobre la rejilla, nunca intercepta
+     clics (pointer-events:none) -- recalculadas por mesa.js a partir de
+     la posición real de las tarjetas. */
+  .flechas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 1;
+    overflow: visible;
+  }
+  .flecha-ida {
+    fill: none;
+    stroke: #7a8aa0;
+    stroke-width: 2;
+  }
+  .flecha-vuelta {
+    fill: none;
+    stroke: #f2d06b;
+    stroke-width: 2;
+    stroke-dasharray: 5 3;
+  }
+  .etiqueta-vuelta {
+    fill: #f2d06b;
+    font-family: "VT323", monospace;
+    font-size: 15px;
+  }
+
+  /* Punto 9: por debajo de ~900px, una columna en el orden del flujo; las
+     flechas (pensadas para 4 columnas) se ocultan en vez de recalcularse
+     sobre un layout que no tiene sentido para ellas -- decisión
+     documentada en mesa.js, `_recalcularFlechas`. */
+  @media (max-width: 900px) {
+    .mesa {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .carta[data-rol] {
+      grid-column: auto;
+      grid-row: auto;
+    }
+    .carta[data-rol="cartografo"] { order: 1; }
+    .carta[data-rol="despiezador"] { order: 2; }
+    .carta[data-rol="lector-de-pieza"] { order: 3; }
+    .carta[data-rol="trazador"] { order: 4; }
+    .carta[data-rol="redactor"] { order: 5; }
+    .carta[data-rol="verificador"] { order: 6; }
+    .carta[data-rol="novato"] { order: 7; }
+    .flechas {
+      display: none;
+    }
+  }
+
+  /* Panel "Ahora" + Bitácora (puntos 5 y 6), lado a lado bajo la mesa. */
+  .panel-bajo-mesa {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-family: "VT323", monospace;
+    font-size: 18px;
+    line-height: 1.25;
+  }
+  .panel-bajo-mesa > div {
+    min-width: 220px;
+    background: #1a2230;
+    border: 1px solid #333c4a;
+    border-radius: 4px;
+    padding: 6px 8px;
+    box-sizing: border-box;
+  }
+  .panel-ahora {
+    flex: 1 1 220px;
+  }
+  .panel-bitacora {
+    flex: 2 1 260px;
+  }
+  .panel-bajo-mesa h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-family: "Courier New", "DejaVu Sans Mono", monospace;
+    color: #f2d06b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .panel-bajo-mesa ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  #lista-ahora li {
+    border-bottom: 1px solid #222a35;
+    padding: 1px 0;
+    word-break: break-word;
+  }
+  #lista-bitacora li {
+    white-space: normal;
+    word-break: break-word;
+    border-bottom: 1px solid #222a35;
+    padding: 1px 0;
+  }
+
+  /* Puertas del guardia (punto 7), franja abajo. */
+  .puertas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .puerta {
+    flex: 1 1 220px;
+    background: #1a2230;
+    border: 2px solid #333c4a;
+    border-radius: 4px;
+    padding: 6px 8px;
+    box-sizing: border-box;
+    font-family: "VT323", monospace;
+    font-size: 15px;
+  }
+  .puerta--discontinua {
+    border-style: dashed;
+  }
+  .puerta-titulo {
+    font-family: "Courier New", "DejaVu Sans Mono", monospace;
+    font-size: 13px;
+    color: #8fd0e8;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .puerta-regla {
+    color: #8fa0b8;
+    font-size: 13px;
+    margin: 2px 0;
+  }
+  .puerta-estado {
+    word-break: break-word;
+  }
+  .puerta--roja {
+    border-color: #c23b3b;
+    box-shadow: 0 0 6px rgba(194, 59, 59, 0.5);
+  }
+  .puerta--roja .puerta-estado {
+    color: #ff9ecb;
+  }
+  .puerta--ambar {
+    border-color: #e8c84a;
+    box-shadow: 0 0 6px rgba(232, 200, 74, 0.5);
+  }
+  .puerta--ambar .puerta-estado {
+    color: #f2e08a;
+  }
+
   .controles {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
     width: 100%;
-    max-width: 320px;
   }
   .controles button {
     background: #1a2230;
@@ -122,7 +427,6 @@
   }
   .aviso-directo {
     width: 100%;
-    max-width: 320px;
     text-align: center;
     color: #e8c84a;
   }
@@ -156,86 +460,11 @@
     word-break: break-word;
     font-size: 12px;
   }
-  /* 360px de ancho sin scroll horizontal (plan, Tarea 10): nada aquí fija
-     un ancho mayor que 100vw; el lienzo se escala por JS a ×1 cuando no cabe
-     a ×3/×4 (ver escena.js:_escalarLienzo). */
+  /* Punto 9: sin scroll horizontal desde 1280px -- nada aquí fija un ancho
+     mayor que 100vw; `main` tiene max-width: 1200px y la rejilla usa `fr`,
+     no px fijos. */
 
-  /* D20 punto 6: bitácora e inventario, antes dentro del lienzo (Tarea 11),
-     ahora un panel HTML normal debajo -- por eso usan su propia fuente
-     (VT323, más legible a tamaño de texto real que la fuente de mapa de
-     bits de 5×7, pensada para 320px de lienzo) en vez de la del canvas. */
-  .panel-registro {
-    width: 100%;
-    max-width: 640px;
-    margin-top: 12px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    font-family: "VT323", monospace;
-    font-size: 18px;
-    line-height: 1.25;
-  }
-  .panel-registro > div {
-    min-width: 220px;
-    background: #1a2230;
-    border: 1px solid #333c4a;
-    border-radius: 4px;
-    padding: 6px 8px;
-    box-sizing: border-box;
-  }
-  /* Josem: "la bitacora justo el doble de ancha" -- el doble de hueco que
-     el inventario (2:1 en flex-grow, mismo min-width base para que ninguna
-     de las dos se aplaste por debajo de lo legible al envolver). */
-  .panel-bitacora {
-    flex: 2 1 260px;
-  }
-  .panel-inventario {
-    flex: 1 1 220px;
-  }
-  .panel-registro h2 {
-    margin: 0 0 4px;
-    font-size: 16px;
-    font-family: "Courier New", "DejaVu Sans Mono", monospace; /* cabeceras con la fuente normal, el contenido con VT323 */
-    color: #f2d06b;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .panel-registro ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 220px;
-    overflow-y: auto;
-  }
-  /* Bitácora: líneas completas, sin recorte (a diferencia del lienzo de
-     320px) -- se envuelven si no caben. */
-  #lista-bitacora li {
-    white-space: normal;
-    word-break: break-word;
-    border-bottom: 1px solid #222a35;
-    padding: 1px 0;
-  }
-  #lista-inventario li {
-    border-bottom: 1px solid #222a35;
-    padding: 1px 0;
-  }
-  .item-inventario {
-    background: none;
-    border: none;
-    color: #8fd0e8;
-    font-family: inherit;
-    font-size: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-    padding: 0;
-    text-align: left;
-    word-break: break-all;
-  }
-  .item-inventario:hover {
-    color: #c9a0e8;
-  }
-  /* Anexo 2026-10-04, Tarea 15 (D21): formulario para lanzar un run desde
-     la propia página, encima de la lista de runs. */
+  /* Formulario de lanzar (D21, Tarea 15): sin cambios. */
   .form-lanzar {
     display: flex;
     flex-wrap: wrap;
@@ -295,7 +524,7 @@
 <header id="cabecera" class="cabecera"></header>
 
 <main>
-  <!-- Anexo 2026-10-04, Tarea 15 (D21). La rellena/gobierna escena.js
+  <!-- D21 (Tarea 15). La rellena/gobierna mesa.js
        (`_instalarFormularioLanzar`). "falso" empieza marcado a propósito
        (gastar de verdad es la excepción, no el default). -->
   <form id="form-lanzar" class="form-lanzar">
@@ -309,11 +538,12 @@
 
   <div id="lista-runs" class="lista-runs"></div>
 
-  <div id="zona-lienzo" class="zona-lienzo" hidden>
-    <div class="lienzo-wrap">
-      <canvas id="lienzo" width="320" height="200"></canvas>
-    </div>
-
+  <!-- D22: la mesa de papeles sustituye a la escena de D20 (un único
+       <canvas> con personajes) por esta rejilla de tarjetas HTML + overlay
+       SVG de flechas. mesa.js construye el contenido de #mesa y #puertas
+       por JS (mismo patrón que ya usaba escena.js para la cabecera/lista de
+       runs), así que aquí solo hacen falta los contenedores. -->
+  <div id="zona-mesa" class="zona-mesa" hidden>
     <div id="controles" class="controles">
       <button id="btn-pausa" type="button">Pausa</button>
       <button type="button" data-vel="1">×1</button>
@@ -324,24 +554,27 @@
 
     <div id="aviso-directo" class="aviso-directo" hidden></div>
 
-    <!-- Anexo 2026-10-04, Tarea 15 (D21): solo visible en modo directo
-         mientras no haya llegado run_fin -- lo gobierna _arrancarDirecto. -->
+    <!-- D21 (Tarea 15): solo visible en modo directo mientras no haya
+         llegado run_fin -- lo gobierna _arrancarDirecto. -->
     <button id="btn-parar" type="button" hidden>Parar</button>
 
-    <!-- D20 punto 6: bitácora e inventario fuera del lienzo. Las rellena
-         escena.js (_actualizarBitacora/_actualizarInventario) cada vez que
-         se repinta el lienzo, con el mismo `estado` -- nunca quedan
-         desincronizados entre sí. -->
-    <div id="panel-registro" class="panel-registro">
+    <div class="mesa-wrap">
+      <div id="mesa" class="mesa"></div>
+      <svg id="flechas" class="flechas"></svg>
+    </div>
+
+    <div class="panel-bajo-mesa">
+      <div class="panel-ahora">
+        <h2>Ahora</h2>
+        <ul id="lista-ahora"></ul>
+      </div>
       <div class="panel-bitacora">
         <h2>Bitácora</h2>
         <ul id="lista-bitacora"></ul>
       </div>
-      <div class="panel-inventario">
-        <h2>Inventario</h2>
-        <ul id="lista-inventario"></ul>
-      </div>
     </div>
+
+    <div id="puertas" class="puertas"></div>
   </div>
 </main>
 
@@ -351,8 +584,8 @@
 </aside>
 
 <script type="module">
-  import { arrancar } from "/static/escena.js";
-  arrancar(document.getElementById("lienzo"), document.getElementById("cabecera"));
+  import { arrancar } from "/static/mesa.js";
+  arrancar(document.getElementById("mesa"), document.getElementById("cabecera"));
 </script>
 </body>
 </html>
