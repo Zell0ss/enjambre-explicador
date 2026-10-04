@@ -170,3 +170,17 @@ test("D22: el verificador que lee de la salida algo que no es el artículo salta
   const s2 = aplicar(s, lee("verificador", "/s/fichas/a.md"));
   assert.deepEqual(s2.saltos.map(x => [x.agente, x.ruta]), [["verificador", "fichas/a.md"]]);
 });
+
+test("D24: reanudado quita el motivo y no reinicia el run", () => {
+  const s = corre(
+    ini,
+    ev("fin_agente", { agente: "cartografo", estado_final: "terminado", duracion_s: 1, coste_usd: 0.5 }),
+    ev("run_fin", { motivo: "tope_coste" }),
+    ev("reanudado", { params: { max_vueltas: 3 }, coste_previo_usd: 0.5, desde: "tope_coste" }),
+  );
+  assert.equal(s.motivo, null);
+  assert.equal(s.max_vueltas, 3);
+  assert.equal(s.coste, 0.5);
+  assert.equal(s.agentes.cartografo.coste_usd, 0.5);
+  assert.ok(s.bitacora.at(-1).includes("reanudado") && s.bitacora.at(-1).includes("tope_coste"));
+});

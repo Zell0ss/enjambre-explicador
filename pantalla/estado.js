@@ -127,6 +127,23 @@ export function aplicar(estado, evento) {
       break;
     }
 
+    // D24 (Tarea 17, anexo 2026-10-04 (3)): continuar un run parado. A
+    // diferencia de `run_inicio`, NO reinicia nada salvo `motivo`/
+    // `max_vueltas` -- agentes, coste, inventario, puertas, saltos y
+    // bitácora siguen siendo los mismos que traía el run antes de pararse
+    // (`coste_previo_usd` es solo informativo para la cabecera/bitácora: el
+    // propio `s.coste` ya lleva lo gastado hasta ahora, sumado evento a
+    // evento por cada `fin_agente` anterior -- sumarlo aquí otra vez lo
+    // duplicaría).
+    case "reanudado": {
+      s.motivo = null;
+      if (evento.params && typeof evento.params.max_vueltas === "number") {
+        s.max_vueltas = evento.params.max_vueltas;
+      }
+      addBitacora(`reanudado (venía de ${evento.desde})`);
+      break;
+    }
+
     case "lanzado": {
       const instancia = evento.agente;
       const rol = getRol(instancia);

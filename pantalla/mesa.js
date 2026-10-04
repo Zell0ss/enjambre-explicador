@@ -743,20 +743,69 @@ function _construirCabecera(cabecera) {
   // runs + formulario de lanzar), oculto por defecto -- `arrancar` lo
   // enseña solo cuando hay `?run=` en la URL (ver más abajo), nunca en la
   // propia portada, donde no pintaría nada.
+  //
+  // "Continuar" (D24, Tarea 17): oculto por defecto -- `_actualizarCabecera`
+  // lo enseña en cuanto `estado.motivo` está fijado y no es "aprobado"
+  // (tanto en directo como en repetición, mismo código para los dos: un
+  // único sitio decide si hay algo que continuar).
   cabecera.innerHTML =
     '<a id="c-volver" class="campo volver" href="?" hidden>&larr; volver</a>' +
     '<span class="campo">run <strong id="c-run">—</strong></span>' +
     '<span class="campo"><strong id="c-vuelta">vuelta —/?</strong></span>' +
     '<span class="campo">coste <strong id="c-coste">—</strong></span>' +
     '<span class="campo">reloj <strong id="c-reloj">—</strong></span>' +
-    '<span class="campo">motivo <strong id="c-motivo">—</strong></span>';
-  return {
+    '<span class="campo">motivo <strong id="c-motivo">—</strong></span>' +
+    '<span id="c-continuar" class="campo continuar" hidden>' +
+    '<label>$ extra <input id="c-continuar-tope" type="number" value="5" min="0" max="10" step="0.5"></label>' +
+    '<label>vueltas máx. <input id="c-continuar-vueltas" type="number" min="0" max="3"></label>' +
+    '<button id="c-continuar-btn" type="button">Continuar</button>' +
+    '<span id="c-continuar-error" class="error-continuar"></span>' +
+    "</span>";
+  const cab = {
     volver: cabecera.querySelector("#c-volver"),
     run: cabecera.querySelector("#c-run"),
     vuelta: cabecera.querySelector("#c-vuelta"),
     coste: cabecera.querySelector("#c-coste"),
     reloj: cabecera.querySelector("#c-reloj"),
     motivo: cabecera.querySelector("#c-motivo"),
+    continuar: cabecera.querySelector("#c-continuar"),
+    continuarTope: cabecera.querySelector("#c-continuar-tope"),
+    continuarVueltas: cabecera.querySelector("#c-continuar-vueltas"),
+    continuarBtn: cabecera.querySelector("#c-continuar-btn"),
+    continuarError: cabecera.querySelector("#c-continuar-error"),
+  };
+  _instalarContinuar(cab);
+  return cab;
+}
+
+function _instalarContinuar(cab) {
+  if (!cab.continuarBtn) return;
+  cab.continuarBtn.onclick = async () => {
+    if (cab.continuarError) cab.continuarError.textContent = "";
+    cab.continuarBtn.disabled = true;
+    const tope_usd = Number(cab.continuarTope.value);
+    const max_vueltas = Number(cab.continuarVueltas.value);
+    try {
+      const resp = await fetch("/api/reanudar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+        // `_repo`/`_run` ya están puestos: el botón solo existe viendo un
+        // run (directo o repetición), nunca en la portada.
+        body: JSON.stringify({ repo: _repo, run: _run, tope_usd, max_vueltas }),
+      });
+      const cuerpo = await resp.json().catch(() => ({}));
+      if (resp.status === 202) {
+        // Igual que al lanzar (D21): salta al directo del mismo run -- ahí
+        // es donde se ve la continuación en marcha.
+        location.href = `?run=${encodeURIComponent(`${cuerpo.repo}/${cuerpo.run}`)}&modo=directo`;
+        return;
+      }
+      if (cab.continuarError) cab.continuarError.textContent = cuerpo.error || `error ${resp.status} al continuar`;
+    } catch (err) {
+      if (cab.continuarError) cab.continuarError.textContent = `no se pudo contactar con el servidor: ${err}`;
+    } finally {
+      cab.continuarBtn.disabled = false;
+    }
   };
 }
 
@@ -768,6 +817,19 @@ function _actualizarCabecera(motivoForzado) {
   _cab.coste.textContent = typeof _estado.coste === "number" ? `$${_estado.coste.toFixed(4)}` : "—";
   _cab.reloj.textContent = _estado.t ? _estado.t.substring(11, 19) : "—";
   _cab.motivo.textContent = motivoForzado || _estado.motivo || "—";
+
+  // D24: "Continuar" aparece en cuanto hay un motivo fijado que no es
+  // "aprobado" -- se precarga "vueltas máx." con el `max_vueltas` del run
+  // SOLO al aparecer (no en cada repintado: pisaría lo que Josem ya haya
+  // tecleado ahí mientras el botón sigue visible).
+  if (_cab.continuar) {
+    const puedeContinuar = !!_estado.motivo && _estado.motivo !== "aprobado";
+    const aparece = puedeContinuar && _cab.continuar.hidden;
+    _cab.continuar.hidden = !puedeContinuar;
+    if (aparece && _cab.continuarVueltas) {
+      _cab.continuarVueltas.value = typeof _estado.max_vueltas === "number" ? String(_estado.max_vueltas) : "2";
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1032,7 +1094,16 @@ function _arrancarDirecto(repo, run) {
   _render(_estado, Date.now());
   ocultarAviso();
 
-  let terminado = false;
+  // D24 (Tarea 17): un `run_fin` ya NO cierra el directo por sí solo -- el
+  // servidor (`_servir_directo`) sigue el fichero más allá del primer
+  // `run_fin` si hay una continuación en marcha para este mismo run, así
+  // que cerrar aquí en cuanto se ve uno perdería el `reanudado` (y lo que
+  // venga después) justo cuando más falta hace verlo. `vistoRunFinSinContinuar`
+  // solo sirve para distinguir, en `onerror`, un cierre NORMAL del servidor
+  // (ya vimos un `run_fin` y nada lo ha desmentido después) de una
+  // desconexión real a medio run (nunca vimos ninguno) -- la única vez que
+  // de verdad hace falta tratarlas distinto es ahí.
+  let vistoRunFinSinContinuar = false;
   const url = `/api/directo/${encodeURIComponent(repo)}/${encodeURIComponent(run)}`;
   const es = new EventSource(url);
 
@@ -1045,8 +1116,7 @@ function _arrancarDirecto(repo, run) {
     }
     alimentar(evento);
     if (evento.tipo === "run_fin") {
-      terminado = true;
-      es.close();
+      vistoRunFinSinContinuar = true;
       if (btnParar) btnParar.hidden = true;
       if (aviso) {
         aviso.innerHTML = "";
@@ -1058,13 +1128,27 @@ function _arrancarDirecto(repo, run) {
         aviso.hidden = false;
       }
     } else {
+      // Cualquier evento DESPUÉS de un `run_fin` (el propio `reanudado`,
+      // el primero) es la prueba de que sí hay continuación: se desmiente
+      // el "terminado" de arriba y vuelve el botón Parar (hay un proceso
+      // nuevo al que sí se le puede mandar la señal).
+      vistoRunFinSinContinuar = false;
+      if (btnParar) btnParar.hidden = false;
       _actualizarCabecera("EN DIRECTO");
       ocultarAviso();
     }
   };
 
   es.onerror = () => {
-    if (terminado) return;
+    if (vistoRunFinSinContinuar) {
+      // El servidor ha cerrado la conexión DESPUÉS de un `run_fin` sin que
+      // nada posterior lo desmintiera -- el final normal (D24: sin
+      // continuación en marcha), no una desconexión real. `es.close()`
+      // evita que el reintento automático de EventSource vuelva a pedir
+      // todo el fichero para nada.
+      es.close();
+      return;
+    }
     mostrarAviso("conexión perdida, reintentando…");
     _estado = inicial();
     _estado.run = run;

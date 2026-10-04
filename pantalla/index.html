@@ -60,6 +60,47 @@
   header.cabecera .volver:hover {
     text-decoration: underline;
   }
+  /* D24 (Tarea 17): "Continuar" -- mismos tonos que .form-lanzar, dentro de
+     la cabecera en vez de debajo porque solo tiene sentido viendo un run
+     parado, nunca en la portada. */
+  header.cabecera .continuar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: normal;
+  }
+  header.cabecera .continuar label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  header.cabecera .continuar input {
+    width: 56px;
+    background: #0b0f14;
+    color: #e8e0c8;
+    border: 1px solid #333c4a;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-family: inherit;
+    font-size: inherit;
+  }
+  header.cabecera .continuar button {
+    background: #1e3a2a;
+    color: #a9e88f;
+    border: 1px solid #2a5a3a;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  header.cabecera .continuar button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  header.cabecera .error-continuar {
+    color: #ff6b6b;
+  }
   main {
     width: 100%;
     max-width: 1200px;
