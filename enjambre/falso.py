@@ -118,11 +118,10 @@ _ROLES_CON_REPO = {"cartografo", "despiezador", "lector-de-pieza", "trazador"}
 def _lecturas_de_pega(rol: str, campos: dict[str, str], ctx: Contexto) -> list[Path]:
     """D22: qué lee cada rol en la demo --falso, de la salida y del repo si
     le toca, antes de ponerse a escribir -- para que la mesa de papeles
-    tenga lecturas por agente, papel que se enciende y puertas que enseñar,
-    y no se quede en el "Read encargo" fijo de siempre. Rutas ABSOLUTAS en
-    cada caso (igual que emitiría el `lanzar` real, D17): relativizarlas
-    para mostrarlas es cosa del reductor del lado de la pantalla, no de
-    aquí."""
+    tenga lecturas por agente, papel que se enciende y puertas que enseñar.
+    Rutas ABSOLUTAS en cada caso (igual que emitiría el `lanzar` real, D17):
+    relativizarlas para mostrarlas es cosa del reductor del lado de la
+    pantalla, no de aquí."""
     salida, repo = ctx.salida, ctx.repo
     lecturas: list[Path] = []
 
@@ -217,10 +216,12 @@ def hacer_lanzar_falso(
         inicio = time.monotonic()
 
         ctx.eventos.emitir("estado", instancia, estado="leyendo", detalle="encargo")
-        ctx.eventos.emitir("herramienta", instancia, herramienta="Read", detalle="encargo")
 
-        # D22 (Tarea 16): lecturas de verdad de la salida/repo (más abajo que
-        # el "Read encargo" fijo de siempre) + el Glob con patrón del
+        # D22 (Tarea 16, retoque 5): ya NO se emite un `herramienta` Read de
+        # "encargo" -- no es una ruta, y el panel "Ahora" (que lista
+        # `agente.lecturas`, construido solo a partir de Read de rutas, ver
+        # estado.js) lo enseñaba tal cual, como si fuera un papel más.
+        # Lecturas de verdad de la salida/repo + el Glob con patrón del
         # cartógrafo (D23) + el teatro de denegados de redactor/novato en su
         # primera vuelta -- todo dentro de la misma fase "leyendo", sin
         # sleeps nuevos, para no alargar la demo.
@@ -250,7 +251,7 @@ def hacer_lanzar_falso(
         ctx.eventos.emitir("estado", instancia, estado="terminado")
 
         num_herramientas = (
-            len(rutas) + 1 + len(lecturas_extra) + (1 if agente.rol == "cartografo" else 0)
+            len(rutas) + len(lecturas_extra) + (1 if agente.rol == "cartografo" else 0)
         )
         return Resultado(
             estado_final="terminado",
