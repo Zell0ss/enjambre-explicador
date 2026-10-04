@@ -322,3 +322,28 @@ def test_num_turns_llega_desde_result_message(tmp_path):
         )
     )
     assert t.resultado().num_turns == 7
+
+
+# --- D23: Glob y Grep llevan además `patron` --------------------------------
+
+
+def test_herramienta_glob_y_grep_llevan_patron(tmp_path):
+    c = ctx(tmp_path)
+    t = Traductor("cartografo", c)
+    t.procesar(am([ToolUseBlock("1", "Glob", {"pattern": "**/*.py", "path": str(c.repo)})]))
+    t.procesar(am([ToolUseBlock("2", "Grep", {"pattern": "def "})]))
+    t.procesar(am([ToolUseBlock("3", "Read", {"file_path": str(c.repo / "a.py")})]))
+    h = [e for e in leer(c) if e["tipo"] == "herramienta"]
+    assert (h[0]["detalle"], h[0]["patron"]) == (str(c.repo), "**/*.py")
+    assert (h[1]["detalle"], h[1]["patron"]) == ("def ", "def ")
+    assert "patron" not in h[2]
+
+
+def test_denegado_glob_lleva_carpeta_y_patron(tmp_path):
+    c = ctx(tmp_path)
+    hook = hacer_hook(cargar("redactor"), "redactor", c)
+    entrada = {"hook_event_name": "PreToolUse", "tool_name": "Glob",
+               "tool_input": {"pattern": "**/*.py", "path": str(c.repo)}, "tool_use_id": "1"}
+    asyncio.run(hook(entrada, "1", {"signal": None}))
+    [d] = [e for e in leer(c) if e["tipo"] == "denegado"]
+    assert (d["detalle"], d["patron"]) == (str(c.repo), "**/*.py")

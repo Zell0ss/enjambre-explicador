@@ -94,6 +94,20 @@ _ESTADO_POR_TOOL = {
 _MAX_RESPUESTA = 500
 
 
+def _patron_de(tool_name: str, tool_input: dict) -> str | None:
+    """D23: además de `detalle` (la carpeta si la hay, si no el patrón --
+    sin cambios, ver abajo), los eventos `herramienta` y `denegado` de Glob
+    y Grep llevan un campo `patron` aparte con el `pattern` crudo. En el run
+    real, la mitad de los Glob del cartógrafo decían solo la ruta del repo
+    (`detalle`): no se sabía qué patrón buscaba. Devuelve `None` (campo
+    omitido del evento, no `null`) para cualquier otra tool o si no hay
+    `pattern`."""
+    if tool_name not in ("Glob", "Grep"):
+        return None
+    patron = tool_input.get("pattern")
+    return patron if isinstance(patron, str) and patron else None
+
+
 def hacer_hook(agente: Agente, instancia: str, ctx: Contexto, denegados: set[str] | None = None):
     """Fabrica el callback `PreToolUse` de este lanzamiento (D8).
 
@@ -157,16 +171,31 @@ def hacer_hook(agente: Agente, instancia: str, ctx: Contexto, denegados: set[str
             # dentro de la rama que precisamente tiene que fallar cerrado sin
             # reventar.
             patron = None
+            # Mismo motivo para `tool_input`: lo usa `_patron_de` (D23) justo
+            # debajo, y si el fallo fue en `entrada["tool_name"]` nunca se
+            # llegó a asignar en el try.
+            tool_input = {}
 
         if not ok:
             if tool_use_id is not None:
                 denegados.add(tool_use_id)
+            # D23: campo `patron` aparte (Glob Y Grep) además de `detalle`,
+            # igual que en el evento `herramienta` de Traductor -- distinto
+            # del `patron` de arriba, que es solo-Glob y solo para la
+            # comprobación de seguridad de `permitido()`.
+            patron_evento = _patron_de(tool_name, tool_input)
+            extra = {"patron": patron_evento} if patron_evento is not None else {}
             ctx.eventos.emitir(
                 # `ruta_de` no cubre Glob (solo tiene `pattern`, no
                 # `path`/`file_path`): sin caer a `patron`, un Glob denegado
                 # siempre mostraba `detalle=""` en pantalla aunque el patrón
                 # que se intentó ya se había extraído arriba.
-                "denegado", instancia, herramienta=tool_name, detalle=ruta or patron or "", motivo=motivo
+                "denegado",
+                instancia,
+                herramienta=tool_name,
+                detalle=ruta or patron or "",
+                motivo=motivo,
+                **extra,
             )
             return {
                 "hookSpecificOutput": {
@@ -300,8 +329,10 @@ class Traductor:
                 if isinstance(bloque, ToolUseBlock):
                     self._num_herramientas += 1
                     detalle = ruta_de(bloque.name, bloque.input) or bloque.input.get("pattern", "")
+                    patron = _patron_de(bloque.name, bloque.input)
+                    extra = {"patron": patron} if patron is not None else {}
                     self._ctx.eventos.emitir(
-                        "herramienta", self._instancia, herramienta=bloque.name, detalle=detalle
+                        "herramienta", self._instancia, herramienta=bloque.name, detalle=detalle, **extra
                     )
                     estado = _ESTADO_POR_TOOL.get(bloque.name)
                     if estado is not None:
