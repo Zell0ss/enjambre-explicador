@@ -2,9 +2,11 @@
 
 ## Estado
 
-**Tareas 1-12 y 14: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del plan) y
-pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Tarea 14 cerrada, a la espera de que
-Josem la revise con la captura antes de la Tarea 15 (lanzar desde la página).
+**Tareas 1-12, 14 y 15: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del plan)
+y pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Dio el visto bueno a la Tarea 14
+("sigue siigue") tras pedir dos retoques rápidos (bitácora el doble de ancha; fuera la fuente
+de mapa de bits propia, VT323 en su lugar). Tarea 15 (lanzar desde la página) cerrada. Queda
+la Tarea 13 (Aceptación, H6), que lanza Josem.
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
@@ -150,31 +152,65 @@ Josem la revise con la captura antes de la Tarea 15 (lanzar desde la página).
   Lienzo: se queda en 320×200 (no se encoge a 320×144) — los 56px que antes ocupaba la barra
   SCUMM se reaprovechan como alto de escena para que quepan las 4 filas de lectores.
 
-  **Aviso para cuando Josem revise la captura:** los nombres de rol salen bastante
-  abreviados (`desp.`, `traz.`, `reda.`, `veri.`, `nova.`, `cart.`) — con `ANCHO_MAX_NOMBRE`
-  en 34px y nombres de 8-11 caracteres (`medirTexto` = 6px/carácter), no caben enteros sin
-  invadir la estación de al lado dado el ancho de 320px y la separación actual entre
-  puestos (~30-50px). No es un bug, es el límite físico del lienzo a este ancho; si Josem lo
-  quiere más legible hace falta ensanchar huecos, achicar la fuente o aceptar dos líneas de
-  nombre, no solo subir el número.
-
   Commit 94c6104. 128/128 Python, 12/12 JS (10 + 2 nuevas de `nombreCorto`/bitácora,
   literales del plan). Captura en `docs/capturas/tarea14-mitad-lectores.png`.
 
+- **Dos retoques pedidos por Josem tras ver la captura de la Tarea 14:**
+  1. *"la bitacora justo el doble de ancha"* — `.panel-bitacora`/`.panel-inventario` en
+     `index.html`, `flex: 2 1` vs `flex: 1 1` en vez del 1:1 que tenían. Commit d47f3bd.
+  2. *"me joroba lo indecible... me lleva a mis tiempos de spectrum... pero no funciona...
+     cambiala por la misma que la bitacora"* — la fuente de mapa de bits propia (5×7, Tarea
+     11) deja de usarse en el lienzo (nombres y bocadillos); pasan a VT323, la misma que ya
+     usaba el panel de bitácora/inventario. **La fuente vieja no se borró** ("construiste tu
+     la fuente? no la borres: dejala por ahi que la usaremos para algo") — vive intacta en
+     `pantalla/fuente-pixel.js`, sin usar por nadie, para cuando haga falta. `sprites.js`:
+     `dibujarTexto`/`medirTexto` reescritas sobre `ctx2d.font`/`fillText`/`measureText`;
+     `cargarFuenteTexto()` nueva (mismo patrón que `cargarSpritesPersonajes`: espera a que
+     VT323 cargue de verdad antes del primer pintado, si no el canvas se queda pintando con
+     el fallback `monospace` para siempre). Honestidad comprobada a propósito: `fillText` SÍ
+     lleva antialiasing (a diferencia del `fillRect` de 1×1 de la fuente vieja) y el lienzo
+     se escala con `image-rendering: pixelated` -- verificado a ×4 real que se nota un ligero
+     halo gris de cerca pero se lee limpio a tamaño normal, aceptado a sabiendas. Commit
+     1f0d403 (+ 3eec993, captura canónica actualizada).
+
+  Un agente en segundo plano empezó la Tarea de la fuente con un encargo mío previo (reducir
+  a 4×6) y, tras el cambio de instrucción de Josem a mitad de camino, llegó a escribir la
+  base de la solución VT323 antes de agotar su cupo de sesión sin comitear nada; completé el
+  enganche, la verificación visual y la preservación de la fuente vieja yo mismo.
+
+  Josem dio el visto bueno ("sigue siigue") y se pasó a la Tarea 15.
+
+- **Tarea 15** (lanzar el run desde la página, H5b, D21): `orquestar.main` gana `--run`
+  (pasa a `orquestar(run=...)`, que ya lo aceptaba). `pantalla.crear_servidor` gana
+  `raiz_repos` (default `/data`), `comando` (sustituible en pruebas) y `dir_logs`. Rutas
+  nuevas: `POST /api/lanzar` (valida repo/tope_usd/max_vueltas/falso, 400/403/409 según
+  toque, lanza el subproceso con `start_new_session=True`), `POST /api/parar` (SIGINT),
+  `GET /api/lanzador`. Anti-CSRF uniforme (`Content-Type: application/json` + `X-Enjambre:
+  1`, si no 403). `_servir_directo` espera hasta 30s a que aparezca `eventos.jsonl` (si se
+  acaba de lanzar desde la página, el navegador puede llegar antes de que exista). Portada:
+  formulario (repo/tope/vueltas/casilla "falso", marcada por defecto) + botón Parar en
+  directo mientras no haya `run_fin`.
+
+  **Bug real encontrado probando esto de verdad** (no solo con las pruebas — el proceso de
+  mentira de los tests también lo sufre, con una ventana de carrera minúscula pero real):
+  `proc.send_signal(SIGINT)` puede llegar antes de que el subproceso recién lanzado haya
+  instalado su propio manejador de señales, y entonces el SIGINT lo mata con el manejador
+  por defecto de Python sin dejarle escribir `run_fin: interrumpido`. Medido en este disco:
+  ~30ms hasta que un `python -c "..."` registra su manejador, y el flujo HTTP real de
+  lanzar+comprobar+parar solo deja ~3ms de margen natural. Arreglo: `_parar` espera lo que
+  falte hasta 0.2s desde el lanzamiento antes de mandar la señal — nada si el proceso ya
+  llevaba más que eso corriendo (el caso normal).
+
+  Verificado end-to-end contra un servidor real con Chrome headless vía CDP: casilla "falso"
+  marcada por defecto, lanzar `/etc` da el error de validación, lanzar `/data/agora` con
+  falso navega a directo y se ve en vivo, Parar a mitad deja `motivo: interrumpido`. Ningún
+  run real lanzado en la verificación. Commit 787b44f. 139/139 Python (+11), 12/12 JS.
+
 ## Siguiente
 
-**Tarea 14 lista, a la espera de que Josem la revise con la captura** (su propia instrucción:
-"Tarea 14 → para y pide revisión con la captura → Tarea 12 (tal cual) → Tarea 15 → para y
-pide revisión"). Tarea 12 ya está hecha de antes, no hay que repetirla. Tras el visto bueno:
-**Tarea 15** (lanzar el run desde la página, H5b, D21) — `orquestar.main` gana `--run`;
-`pantalla.crear_servidor` gana `raiz_repos`/`comando`/`dir_logs`; rutas nuevas `POST
-/api/lanzar`, `POST /api/parar`, `GET /api/lanzador`; formulario en la portada. Las pruebas
-del anexo son normativas, igual que el resto del plan. **Regla fija, sin excepción: nunca
-lanzar desde la página un run sin `--falso`** (para no gastar tokens reales sin que Josem lo
-pida explícitamente fuera de este flujo).
-
-Después de la Tarea 15: **parar y pedir revisión** otra vez, antes de la Tarea 13
-(Aceptación, H6, que lanza Josem).
+**Fin de H5b.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** — no hay más trabajo
+de implementación pendiente del plan de fase 2 por mi parte salvo lo que salga de esa
+aceptación o más pulido visual que Josem pida.
 
 ### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 
