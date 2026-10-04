@@ -115,3 +115,58 @@ test("la bitácora usa el nombre corto", () => {
   assert.ok(s.bitacora.at(-1).includes(" datos "));
   assert.ok(!s.bitacora.at(-1).includes("lector-de-pieza"));
 });
+
+// --- D22/D23: la mesa de papeles (Anexo 2026-10-04 (2), Tarea 16) --------
+
+const ini = ev("run_inicio", { repo: "/r", salida: "/s", params: { max_vueltas: 2 } });
+const lee = (agente, ruta, t = "2026-10-03T00:00:01.000") => ev("herramienta", { agente, herramienta: "Read", detalle: ruta, t });
+
+test("D22: max_vueltas sale de run_inicio", () => {
+  assert.equal(corre(ini).max_vueltas, 2);
+  assert.equal(corre(ev("run_inicio")).max_vueltas, null);
+});
+
+test("D22: lecturas recientes por agente, relativas, sin repetir y con tope 8", () => {
+  const s = corre(ini, lee("trazador", "/r/a.py"), lee("trazador", "/r/b.py"), lee("trazador", "/r/a.py"), lee("trazador", "/s/mapa.md"));
+  assert.deepEqual(s.agentes.trazador.lecturas, ["mapa.md", "a.py", "b.py"]);
+  const muchas = corre(ini, ...Array.from({ length: 10 }, (_, i) => lee("trazador", `/r/f${i}.py`)));
+  assert.equal(muchas.agentes.trazador.lecturas.length, 8);
+  assert.equal(muchas.agentes.trazador.lecturas[0], "f9.py");
+});
+
+test("D23: Glob con patrón sobre la raíz del repo", () => {
+  const s = corre(ini, ev("herramienta", { agente: "cartografo", herramienta: "Glob", detalle: "/r", patron: "**/*.py" }));
+  assert.equal(s.agentes.cartografo.bocadillo.texto, "Glob **/*.py en (repo)");
+});
+
+test("D22: el papel leído recuerda quién lo leyó", () => {
+  const s = corre(ini,
+    ev("fichero", { agente: "lector-de-pieza:llm", ruta: "fichas/llm.md" }),
+    lee("trazador", "/s/fichas/llm.md", "2026-10-03T00:00:05.000"),
+    lee("redactor", "/s/fichas/llm.md", "2026-10-03T00:00:09.000"),
+    lee("trazador", "/s/fichas/llm.md", "2026-10-03T00:00:12.000"),
+    lee("trazador", "/s/no-esta.md"),
+  );
+  const f = s.inventario.find(i => i.ruta === "fichas/llm.md");
+  assert.deepEqual(f.leido_por, ["trazador", "redactor"]);
+  assert.equal(f.ultima_lectura, "2026-10-03T00:00:12.000");
+});
+
+test("D22: denegados por rol para las puertas del guardia", () => {
+  const s = corre(ini,
+    ev("denegado", { agente: "redactor", herramienta: "Read", detalle: "/r/x.py", motivo: "fuera del muro" }),
+    ev("denegado", { agente: "redactor", herramienta: "Glob", detalle: "/r", patron: "*", motivo: "fuera del muro" }),
+    ev("denegado", { agente: "lector-de-pieza:datos", herramienta: "Glob", detalle: "../x", motivo: "patrón de Glob fuera del muro" }),
+  );
+  assert.equal(s.puertas.redactor.n, 2);
+  assert.equal(s.puertas.redactor.ultimo.texto, "Glob * en (repo)");
+  assert.equal(s.puertas["lector-de-pieza"].ultimo.instancia, "lector-de-pieza:datos");
+  assert.equal(s.puertas.novato.n, 0);
+});
+
+test("D22: el verificador que lee de la salida algo que no es el artículo salta su prompt", () => {
+  const s = corre(ini, lee("verificador", "/s/articulo.md"), lee("verificador", "/r/app.py"), lee("trazador", "/s/fichas/a.md"));
+  assert.equal(s.saltos.length, 0);
+  const s2 = aplicar(s, lee("verificador", "/s/fichas/a.md"));
+  assert.deepEqual(s2.saltos.map(x => [x.agente, x.ruta]), [["verificador", "fichas/a.md"]]);
+});
