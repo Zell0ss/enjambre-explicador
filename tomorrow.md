@@ -2,9 +2,9 @@
 
 ## Estado
 
-**Tareas 1-12: HECHAS.** Josem revisó H4 ("si, lo he revisado y aunque tengo que afinar el
-look, eso en fase final") y dio luz verde para seguir. Queda la Tarea 13 (Aceptación, H6),
-que lanza Josem.
+**Tareas 1-12 y 14: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del plan) y
+pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Tarea 14 cerrada, a la espera de que
+Josem la revise con la captura antes de la Tarea 15 (lanzar desde la página).
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
@@ -128,11 +128,53 @@ que lanza Josem.
 
   Commit e6d2d4c. 128/128 Python, 10/10 JS (ninguno de los dos tocado).
 
+- **Anexo 2026-10-04 (D20/D21):** tras revisar H4, Josem aprueba D20 (escena neutra, orden
+  del flujo, texto fuera del lienzo) y D21 (lanzar desde la página) — `ENJAMBRE-DISENIO.md`
+  §5.4, detalle en el anexo al final de `docs/plans/2026-10-03-fase-2.md`. Nuevo orden:
+  **Tarea 14 → Tarea 12 (ya hecha, sin cambios) → Tarea 15 → Tarea 13.**
+
+- **Tarea 14** (escena neutra, D20): fuera el barco entero (cielo, cubierta, mástil, mesa
+  larga, farolillos, timón) — fondo liso oscuro + suelo sutil; el estilo "Monkey Island" se
+  queda solo en los personajes (D19). Colocación por orden del flujo, izquierda a derecha:
+  cartógrafo · despiezador · lectores (rejilla 2 columnas, hasta 8) · trazador · redactor ·
+  verificador y novato juntos al final. Nombre bajo cada personaje (`nombreCorto` nueva en
+  `estado.js`, también usada por la bitácora). Color propio por instancia de lector (paleta
+  de 8 tonos), nombre y bocadillo del mismo color. Bocadillos: fuera el sistema de carriles
+  de la Tarea 11, ahora solo sube en vertical si choca, nunca en horizontal. Bitácora e
+  inventario salen del lienzo a un panel HTML debajo (`#panel-registro`), fuente VT323 de
+  Google Fonts con fallback a monospace — bitácora con líneas completas y scroll, más
+  recientes arriba; inventario con rutas completas, clic reutiliza el panel lateral que ya
+  existía. Arreglada la `p` minúscula de la fuente de mapa de bits (fila 1 de su matriz
+  dibujaba literalmente una `P`).
+
+  Lienzo: se queda en 320×200 (no se encoge a 320×144) — los 56px que antes ocupaba la barra
+  SCUMM se reaprovechan como alto de escena para que quepan las 4 filas de lectores.
+
+  **Aviso para cuando Josem revise la captura:** los nombres de rol salen bastante
+  abreviados (`desp.`, `traz.`, `reda.`, `veri.`, `nova.`, `cart.`) — con `ANCHO_MAX_NOMBRE`
+  en 34px y nombres de 8-11 caracteres (`medirTexto` = 6px/carácter), no caben enteros sin
+  invadir la estación de al lado dado el ancho de 320px y la separación actual entre
+  puestos (~30-50px). No es un bug, es el límite físico del lienzo a este ancho; si Josem lo
+  quiere más legible hace falta ensanchar huecos, achicar la fuente o aceptar dos líneas de
+  nombre, no solo subir el número.
+
+  Commit 94c6104. 128/128 Python, 12/12 JS (10 + 2 nuevas de `nombreCorto`/bitácora,
+  literales del plan). Captura en `docs/capturas/tarea14-mitad-lectores.png`.
+
 ## Siguiente
 
-**Fin de H5.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** — no hay más trabajo
-de implementación pendiente del plan de fase 2 por mi parte salvo lo que salga de esa
-aceptación.
+**Tarea 14 lista, a la espera de que Josem la revise con la captura** (su propia instrucción:
+"Tarea 14 → para y pide revisión con la captura → Tarea 12 (tal cual) → Tarea 15 → para y
+pide revisión"). Tarea 12 ya está hecha de antes, no hay que repetirla. Tras el visto bueno:
+**Tarea 15** (lanzar el run desde la página, H5b, D21) — `orquestar.main` gana `--run`;
+`pantalla.crear_servidor` gana `raiz_repos`/`comando`/`dir_logs`; rutas nuevas `POST
+/api/lanzar`, `POST /api/parar`, `GET /api/lanzador`; formulario en la portada. Las pruebas
+del anexo son normativas, igual que el resto del plan. **Regla fija, sin excepción: nunca
+lanzar desde la página un run sin `--falso`** (para no gastar tokens reales sin que Josem lo
+pida explícitamente fuera de este flujo).
+
+Después de la Tarea 15: **parar y pedir revisión** otra vez, antes de la Tarea 13
+(Aceptación, H6, que lanza Josem).
 
 ### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 
