@@ -16,6 +16,17 @@
     font-family: "Courier New", "DejaVu Sans Mono", monospace;
     font-size: 14px;
   }
+  /* Cualquier regla de autor con `display` explícito (.zona-lienzo,
+     .controles...) pisa el `[hidden]{display:none}` de la hoja por defecto
+     del navegador -- es la propia cascada CSS (origen de autor > agente de
+     usuario, con independencia de especificidad), no un despiste de cada
+     clase suelta. Una sola regla aquí, con la máxima prioridad posible,
+     resuelve el problema para TODO el documento de una vez (encontrado
+     probando el modo directo, Tarea 12: `controles.hidden = true` no
+     ocultaba nada pese a aplicarse). */
+  [hidden] {
+    display: none !important;
+  }
   body {
     padding: 8px;
     box-sizing: border-box;
@@ -101,6 +112,15 @@
     flex: 1 1 auto;
     min-width: 80px;
   }
+  .aviso-directo {
+    width: 100%;
+    max-width: 320px;
+    text-align: center;
+    color: #e8c84a;
+  }
+  .aviso-directo a {
+    color: #8fd0e8;
+  }
   .panel-lateral {
     position: fixed;
     top: 0;
@@ -151,6 +171,8 @@
       <button type="button" data-vel="16">×16</button>
       <input id="barra" type="range" min="0" max="0" value="0" />
     </div>
+
+    <div id="aviso-directo" class="aviso-directo" hidden></div>
   </div>
 </main>
 

@@ -1,23 +1,21 @@
-// escena.js — render provisional (T10) de la pantalla del enjambre.
+// escena.js — pantalla del enjambre: modo repetición (T10/T11) y modo
+// directo por SSE (T12).
 //
-// Contrato con el resto del sistema (Tareas 11 y 12, ver plan §Tarea 10):
+// Contrato con el resto del sistema:
 //   export function arrancar(lienzo, cabecera)  — arranca la página entera.
-//   export function pintar(ctx2d, estado, ahoraMs) — SOLO dibuja: T11 la
-//     sustituye (junto a sus auxiliares de más abajo) por sprites, sin tocar
-//     nada de lo que hay debajo de la marca "FIN pintar y auxiliares".
+//   export function pintar(ctx2d, estado, ahoraMs) — SOLO dibuja.
 //   export function alimentar(evento) — aplica un evento sobre el estado
-//     compartido y repinta; la usará el modo directo (T12) tras importar
-//     este módulo y abrir su propio EventSource. Aquí solo tiene que existir
-//     y funcionar: no se abre SSE desde esta tarea.
+//     compartido y repinta; la usa el modo directo (`_arrancarDirecto`, más
+//     abajo) por cada `message` de su `EventSource`, tal cual pide el plan.
 //
 // Acoplamiento documentado con index.html (fuera de la firma de `arrancar`,
 // que solo recibe lienzo y cabecera): este módulo busca por id en `document`
 // los controles de repetición (#controles, #btn-pausa, botones [data-vel],
-// #barra), la lista de runs (#lista-runs), el contenedor del lienzo
-// (#zona-lienzo) y el panel lateral (#panel-lateral, #panel-contenido,
-// #cerrar-panel). index.html y escena.js se escriben juntos en esta misma
-// tarea, así que esta costura es segura; si se separan algún día, pasar a
-// hacerlo explícito por parámetros.
+// #barra), el aviso del modo directo (#aviso-directo), la lista de runs
+// (#lista-runs), el contenedor del lienzo (#zona-lienzo) y el panel lateral
+// (#panel-lateral, #panel-contenido, #cerrar-panel). index.html y escena.js
+// se escriben juntos, así que esta costura es segura; si se separan algún
+// día, pasar a hacerlo explícito por parámetros.
 
 import { inicial, aplicar, ROLES } from "./estado.js";
 import {
@@ -102,15 +100,8 @@ export async function arrancar(lienzo, cabecera) {
   _run = partido.slice(1).join("/") || "";
 
   if (modo === "directo") {
-    // Fuera de alcance de T10 (plan: "en esta tarea NO la uses todavía").
-    // Se deja el estado inicial pintado y la cabecera avisando; T12 importa
-    // `alimentar` de este módulo y la llama por cada mensaje SSE recibido
-    // de `/api/directo/<repo>/<run>` — no hace falta tocar `arrancar` para
-    // eso, que es justo el punto de tener `alimentar` ya separada.
-    _estado = inicial();
-    _estado.run = _run;
-    _actualizarCabecera("modo directo: pendiente (Tarea 12)");
-    pintar(_ctx, _estado, Date.now());
+    await cargaSprites;
+    _arrancarDirecto(_repo, _run);
     return;
   }
 
@@ -425,10 +416,15 @@ async function _cargarListaRuns(contenedor) {
     const aRep = document.createElement("a");
     aRep.href = `?run=${encodeURIComponent(id)}&modo=repeticion`;
     aRep.textContent = "[repetición]";
-    const aDir = document.createElement("a");
-    aDir.href = `?run=${encodeURIComponent(id)}&modo=directo`;
-    aDir.textContent = "[directo]";
-    li.append(etiqueta, aRep, document.createTextNode(" "), aDir);
+    li.append(etiqueta, aRep);
+    if (!r.motivo) {
+      // Directo solo tiene sentido para un run todavía en marcha (plan,
+      // Tarea 12): uno ya terminado no tiene nada que emitir por SSE.
+      const aDir = document.createElement("a");
+      aDir.href = `?run=${encodeURIComponent(id)}&modo=directo`;
+      aDir.textContent = "[directo]";
+      li.append(document.createTextNode(" "), aDir);
+    }
     ul.appendChild(li);
   }
   contenedor.innerHTML = "";
@@ -572,6 +568,83 @@ async function _arrancarRepeticion(repo, run) {
   // Expuesto solo para depuración manual desde la consola del navegador;
   // no forma parte del contrato con T11/T12.
   window.__enjambre_debug = { eventos, vTimes, detener: () => rafId && cancelAnimationFrame(rafId) };
+}
+
+// ---------------------------------------------------------------------------
+// Modo directo (T12): un EventSource contra /api/directo/<repo>/<run>,
+// `alimentar` por cada mensaje tal cual pide el plan -- nada de reloj
+// virtual ni barra, el servidor ya manda los eventos al ritmo real.
+// ---------------------------------------------------------------------------
+
+function _arrancarDirecto(repo, run) {
+  const controles = document.getElementById("controles");
+  if (controles) controles.hidden = true; // el plan pide ocultar los controles de repetición
+
+  const aviso = document.getElementById("aviso-directo");
+  const ocultarAviso = () => { if (aviso) aviso.hidden = true; };
+  const mostrarAviso = (texto) => {
+    if (!aviso) return;
+    aviso.textContent = texto;
+    aviso.hidden = false;
+  };
+
+  _estado = inicial();
+  _estado.run = run;
+  _actualizarCabecera("EN DIRECTO");
+  pintar(_ctx, _estado, Date.now());
+  ocultarAviso();
+
+  let terminado = false;
+  const url = `/api/directo/${encodeURIComponent(repo)}/${encodeURIComponent(run)}`;
+  const es = new EventSource(url);
+
+  es.onmessage = (ev) => {
+    let evento;
+    try {
+      evento = JSON.parse(ev.data);
+    } catch {
+      return; // línea corrupta: se ignora, mismo criterio que la repetición
+    }
+    alimentar(evento);
+    if (evento.tipo === "run_fin") {
+      terminado = true;
+      es.close();
+      if (aviso) {
+        aviso.innerHTML = "";
+        aviso.append("run terminado -- ");
+        const enlace = document.createElement("a");
+        enlace.href = `?run=${encodeURIComponent(`${repo}/${run}`)}&modo=repeticion`;
+        enlace.textContent = "ver repetición";
+        aviso.append(enlace);
+        aviso.hidden = false;
+      }
+    } else {
+      // `alimentar` ya ha repintado la cabecera con el motivo real (null
+      // todavía), que dejaría "—"; mientras no haya `run_fin` se fuerza
+      // "EN DIRECTO" en su lugar.
+      _actualizarCabecera("EN DIRECTO");
+      // Si el aviso de "conexión perdida" seguía puesto de un corte
+      // anterior, un mensaje que llega de verdad confirma que ya se ha
+      // recuperado -- quitarlo, si no se queda pegado en pantalla aunque
+      // todo vuelva a ir bien (visto al probar la reconexión de verdad
+      // contra un servidor reiniciado a mitad de un run).
+      ocultarAviso();
+    }
+  };
+
+  es.onerror = () => {
+    if (terminado) return; // cierre limpio tras run_fin: `close()` no es un error
+    // El propio EventSource reintenta solo (comportamiento nativo del
+    // navegador); cuando reconecte, `_servir_directo` siempre reabre
+    // `eventos.jsonl` desde el principio (pantalla.py), así que hay que
+    // vaciar el estado AHORA -- si no, los eventos reenviados se
+    // reaplicarían sobre el estado ya construido y duplicarían bitácora/
+    // inventario/coste.
+    mostrarAviso("conexión perdida, reintentando…");
+    _estado = inicial();
+    _estado.run = run;
+    _actualizarCabecera("conexión perdida, reintentando…");
+  };
 }
 
 // ---------------------------------------------------------------------------
