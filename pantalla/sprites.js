@@ -588,91 +588,13 @@ export const COLOR_TEXTO = {
   novato: "#ff9ecb",
 };
 
-// ---------------------------------------------------------------------------
-// Texto del lienzo: VT323 (Google Fonts), la misma fuente que ya usa el
-// panel HTML de bitácora/inventario (`index.html`, `.panel-registro`) --
-// Josem, 2026-10-04, sustituyendo la fuente de mapa de bits propia que
-// había aquí (D20 punto 7 y la Tarea de la rejilla 4×6 que no llegó a
-// comitearse): "me lleva a mis tiempos de Spectrum... pero no funciona".
-// `index.html` ya carga la hoja de Google Fonts para VT323 (la usa el panel
-// HTML desde antes); este módulo NO la vuelve a declarar, solo la usa.
-//
-// Por qué esto no es un simple `ctx2d.font = ...` y ya está:
-//   1. VT323 se carga por red. Si se pinta antes de que esté lista, el
-//      navegador usa el fallback (monospace) ESE fotograma, y a diferencia
-//      del HTML normal el `<canvas>` no se repinta solo cuando la fuente
-//      llega -- `cargarFuenteTexto()` (más abajo) expone una promesa que
-//      `escena.js` espera junto a `cargarSpritesPersonajes()` antes del
-//      primer pintado real, mismo patrón que ya usaba para los PNG reales.
-//   2. `fillText` SÍ lleva antialiasing (subpíxeles grises), a diferencia
-//      del `fillRect` de 1×1 de la fuente de mapa de bits -- el lienzo se
-//      escala por CSS con `image-rendering: pixelated`, pensado para arte
-//      sin antialiasing; cómo se ve el resultado está verificado contra el
-//      run real y descrito en el commit, no solo asumido.
-export const FUENTE_TAMANO = 12; // px de ctx2d.font -- elegido a ojo, ver commit
-export const FUENTE_CSS = `${FUENTE_TAMANO}px "VT323", monospace`;
-
-// `ANCHO_GLIFO`/`ALTO_GLIFO` ya no describen un glifo de mapa de bits fijo
-// (VT323 es proporcional, no monoespaciada) -- se quedan exportadas porque
-// `escena.js` sigue leyendo `ALTO_GLIFO` como alto de línea aproximado, para
-// el salto vertical entre bocadillos que chocan y el alto de su rectángulo
-// de colisión (`_dibujarBocadillo`, `ALTO_GLIFO + 1`). `ANCHO_GLIFO` no la
-// usa nada fuera de este fichero (comprobado); se deja con un valor
-// orientativo por si alguna tarea futura la necesita.
-export const ANCHO_GLIFO = Math.round(FUENTE_TAMANO * 0.6);
-export const ALTO_GLIFO = FUENTE_TAMANO;
-
-// Contexto de un `<canvas>` interno, nunca insertado en el DOM, solo para
-// medir texto (`measureText`) con la misma fuente que se pinta -- creado y
-// cacheado la primera vez que hace falta, no en cada llamada a
-// `medirTexto`. El canvas real que sí se pinta (`dibujarTexto`) pone su
-// propio `ctx2d.font` en cada llamada porque es compartido con el resto del
-// dibujo del lienzo (personajes, loro...) y no se puede asumir que nadie
-// más lo haya tocado entre medias.
-let _ctxMedida = null;
-
-function _ctxDeMedida() {
-  if (!_ctxMedida) {
-    _ctxMedida = document.createElement("canvas").getContext("2d");
-  }
-  _ctxMedida.font = FUENTE_CSS;
-  return _ctxMedida;
-}
-
-/**
- * cargarFuenteTexto() — pide a `document.fonts` que cargue VT323 al tamaño
- * de `FUENTE_CSS` y espera a `document.fonts.ready`. Se resuelve siempre
- * (nunca se rechaza): si la carga falla (red, API ausente en un entorno de
- * pruebas), `dibujarTexto` simplemente pintará con el fallback `monospace`
- * de `FUENTE_CSS` -- degradación silenciosa, mismo criterio que el resto
- * del proyecto (ver `cargarSpritesPersonajes`, arriba).
- */
-export function cargarFuenteTexto() {
-  if (typeof document === "undefined" || !document.fonts) return Promise.resolve();
-  return document.fonts
-    .load(FUENTE_CSS)
-    .then(() => document.fonts.ready)
-    .catch(() => {});
-}
-
-/**
- * dibujarTexto(ctx2d, texto, x, y, color) — pinta `texto` con VT323. `(x,y)`
- * sigue siendo la esquina superior izquierda del texto (mismo contrato que
- * la fuente de mapa de bits que sustituye, por eso `textBaseline = "top"`):
- * los dos llamadores reales en `escena.js` (nombre bajo el personaje,
- * bocadillo) no necesitan cambiar nada.
- */
-export function dibujarTexto(ctx2d, texto, x, y, color) {
-  if (!texto) return;
-  ctx2d.font = FUENTE_CSS;
-  ctx2d.textBaseline = "top";
-  ctx2d.textAlign = "left";
-  ctx2d.fillStyle = color;
-  ctx2d.fillText(String(texto), x, y);
-}
-
-/** Ancho en píxeles que ocupará `texto` pintado con dibujarTexto(). */
-export function medirTexto(texto) {
-  if (!texto) return 0;
-  return _ctxDeMedida().measureText(String(texto)).width;
-}
+// El sistema VT323-en-canvas (`dibujarTexto`/`medirTexto`/`cargarFuenteTexto`/
+// `FUENTE_CSS`/`ANCHO_GLIFO`/`ALTO_GLIFO`) que sustituyó aquí a la fuente de
+// mapa de bits vivió solo mientras `escena.js` pintaba nombres/bocadillos a
+// mano en un único `<canvas>` de escena. La Tarea 16 (D22, "la mesa de
+// papeles") sustituyó esa escena por tarjetas HTML -- todo el texto pasó a
+// ser HTML normal -- así que ese sistema se quedó sin ningún llamador.
+// Borrado 2026-10-04 (Josem, sobre este mismo punto: "las funciones me
+// importan menos" -- a diferencia de `pantalla/fuente-pixel.js`, que si se
+// conserva: ver su cabecera). Si hace falta otra vez texto dentro de un
+// `<canvas>`, está en el historial de git (commit 1f0d403 lo introdujo).
