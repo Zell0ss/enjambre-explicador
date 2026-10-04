@@ -80,6 +80,28 @@
   Commits: a6cdfc1 (estado.js), 45f054e (sprites/escena), 17f954c (arreglo del reloj), bb78055
   (captura). 10/10 tests JS, 126/126 Python.
 
+- **Pulido post-cierre de la Tarea 11**, pedido por Josem al ver la captura:
+  1. *"lector de piezas estan muy juntos y su texto se sobreescribe"* — dos arreglos en
+     `escena.js`: `LECTORES_PASO_X` pasa de 18 a `ANCHO_PERSONAJE` (24), ya no se pisan los
+     cuerpos; y `_dibujarBocadillo` ahora lleva un sistema de carriles anticolisión (hasta 9,
+     cubre 8 lectores + el loro a la vez) — si un bocadillo nuevo choca con uno ya pintado ese
+     mismo fotograma, sube una altura de glifo y reintenta. Verificado contra el run real con
+     hasta 6 bocadillos simultáneos, todos legibles. Commit d81dfcc.
+  2. *"dentro de pantalla/ he dejado una carpeta sprites... a ver si los podemos usar"* —
+     Josem trajo arte real (PNG, 7×5×2 = 70 ficheros, mismo contrato exacto que el
+     procedural: 24×32px, 450ms/fotograma) en `pantalla/sprites/`. Exactamente lo que D14 dejó
+     previsto ("sustituibles por PNG"). `sprites.js`: `cargarSpritesPersonajes()` carga los 70
+     y sustituye cada fotograma de `SPRITES` en sitio (si un PNG falla, se queda el procedural
+     — degradación, nunca rotura); `dibujar()` distingue matriz de paleta de imagen real.
+     `escena.js`: `arrancar()` espera la carga antes de `_arrancarRepeticion`. `pantalla.py`:
+     `_NOMBRE_STATIC` ahora permite `/` (el arte vive en subcarpetas por rol) — la barrera de
+     seguridad real sigue siendo `_resuelve_dentro`, sin cambios ahí; test nuevo
+     (`test_static_sirve_subcarpetas`) + caso de traversal con subcarpeta. Commit 66f122c.
+  3. Captura de `docs/capturas/` renovada dos veces (2ebb0fd, c2afb42) para reflejar cada
+     arreglo visual.
+
+  128/128 Python, 10/10 JS tras todo el pulido.
+
 ## Siguiente
 
 **Fin de H4 — el plan pide parar y pedir revisión antes de la Tarea 12** (modo directo, H5).
