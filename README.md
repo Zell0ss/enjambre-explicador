@@ -18,6 +18,9 @@ node --test tests/js/*.mjs
 # Ejecutar orquestador (desarrollo)
 python -m enjambre.orquestar --repo <ruta> [--falso]
 
+# Continuar un run parado (D24) -- excluye --repo/--run/--falso, salen del propio run
+python -m enjambre.orquestar --reanudar <salidas/repo/run> [--tope-usd] [--max-vueltas]
+
 # Arrancar pantalla
 python -m enjambre.pantalla
 ```
@@ -39,6 +42,17 @@ con su sprite animado, lo que lee/escribe ahora y las fichas que deja
 (clic abre su contenido). Debajo, el panel "Ahora" (qué lee cada agente
 activo), la bitácora y las puertas del guardia, que se encienden en rojo
 (ámbar la del verificador) con cada denegado/salto. Ver
-`pantalla/mesa.js`.
+`pantalla/mesa.js`. Un enlace "← volver" en la cabecera regresa a la
+portada (lista de runs / formulario de lanzar) sin tocar la URL a mano.
+
+Un run parado por cualquier motivo salvo `aprobado` (sobre todo el tope de
+coste) se puede **continuar** (D24): la cabecera muestra un botón
+"Continuar" (tanto en directo como en repetición) con el tope extra en $ y
+las vueltas máximas: salta al mismo directo y sigue exactamente donde se
+quedó, sin relanzar lo que ya está hecho ni gastar de más (D25 borra antes
+los ficheros que cada paso relanzado va a crear, para que la tool `Write`
+real no se encuentre con uno que no ha leído en su sesión). El tope que se
+da al continuar es dinero EXTRA, no un total nuevo; el modo (`--falso` o
+real) lo decide siempre el propio run, nunca quien lo continúa.
 
 Ver `CLAUDE.md` para contexto arquitectónico.

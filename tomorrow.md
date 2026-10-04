@@ -2,13 +2,16 @@
 
 ## Estado
 
-**Tareas 1-12, 14, 15 y 16: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del
+**Tareas 1-12, 14, 15, 16 y 17: HECHAS.** Josem revisó H4, aprobó D20/D21 (anexo 2026-10-04 del
 plan) y pidió reordenar: 14 → 12 (ya hecha, sin tocar) → 15 → 13. Dio el visto bueno a la
 Tarea 14 ("sigue siigue") tras pedir dos retoques rápidos (bitácora el doble de ancha; fuera la
 fuente de mapa de bits propia, VT323 en su lugar). Tarea 15 (lanzar desde la página) cerrada.
-**Tarea 16 (D22/D23, "la mesa de papeles") cerrada**: sustituye la escena única de personajes
-(D20) por una rejilla de tarjetas HTML en el orden del flujo -- ver la sección propia más abajo.
-Queda la Tarea 13 (Aceptación, H6), que lanza Josem.
+**Tarea 16 (D22/D23, "la mesa de papeles") cerrada**, con seis retoques de revisión (flechas,
+"vuelta n/max", puertas, falso.py) y un botón "← volver" a la portada, pedido aparte -- ver la
+sección propia más abajo. **Tarea 17 (D24/D25, "continuar un run parado") cerrada**: un run
+parado por cualquier motivo salvo `aprobado` se puede continuar sin relanzar lo que ya está
+hecho ni gastar de más -- ver su sección propia. Queda la Tarea 13 (Aceptación, H6), que lanza
+Josem.
 
 - Tarea 1: cimientos del repo, fixtures, logger LogCentral.
 - Tarea 2: `enjambre/agentes.py` (`cargar`, `ROLES`, `Agente`).
@@ -210,9 +213,9 @@ Queda la Tarea 13 (Aceptación, H6), que lanza Josem.
 
 ## Siguiente
 
-**Fin de H5b.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** — no hay más trabajo
-de implementación pendiente del plan de fase 2 por mi parte salvo lo que salga de esa
-aceptación o más pulido visual que Josem pida.
+**Fin de H5b, incluida la Tarea 17.** Queda la **Tarea 13 (Aceptación, H6), que lanza Josem** —
+no hay más trabajo de implementación pendiente del plan de fase 2 por mi parte salvo lo que
+salga de esa aceptación o más pulido visual que Josem pida.
 
 ### Tarea 16 — la mesa de papeles (D22/D23), Paso 4 y 5
 
@@ -290,6 +293,102 @@ crudo, WebSocket/fetch nativos de Node, sin Playwright):
 `node --check` de los tres `.js` tocados, `node --test tests/js/*.mjs` (18/18, sin tocar
 `estado.js` ni su test) y `.venv/bin/pytest -q` (143/143, sin tocar nada Python) en verde antes
 del commit.
+
+### Retoques de la Tarea 16 + botón "volver"
+
+Tras revisar la mesa de papeles, Josem pidió seis retoques (todos de vista salvo el 5) y luego,
+aparte, un botón para volver a la portada:
+
+1. La flecha despiezador→lectores apuntaba al vacío con pocos lectores (`align-items:start` no
+   estira la tarjeta de lectores a las dos filas) -- su "y" se acota ahora a
+   `[lect.y+20, lect.bottom-20]`, con codo si hace falta acotarla.
+2. El rótulo "vuelta n/max" podía pisar tarjetas en el hueco estrecho entre columnas 3 y 4 --
+   `index.html` abre una columna espaciadora de 110px solo para eso; las cuatro líneas de
+   ida/vuelta de ese hueco se reparten como fracciones de su ancho MEDIDO (nunca un número fijo
+   en JS). redactor→novato pasa de línea recta a codo ("nada de diagonales").
+3. Una puerta encendida ahora enseña el contador `n=` Y el texto del último denegado a la vez
+   (antes, uno sustituía al otro).
+4. La cabecera dice "vuelta n/max" (antes solo "vuelta N"), mismo formato y mismo sitio
+   (`_etiquetaVuelta`, factorizada) que ya tenía la etiqueta de la flecha.
+5. `--falso` (`falso.py`) ya no emite un `herramienta: Read` de pega sobre "encargo" -- era la
+   única "lectura" que no es una ruta, y el panel "Ahora" la enseñaba como si fuera un papel.
+6. `docs/plans/2026-10-03-fase-2.md` commiteado con los anexos de las tareas 14-16.
+
+Capturas nuevas: `docs/capturas/tarea16-retoques-flechas.png` (run real con 7 lectores, la
+tarjeta más baja que antes fallaba), `docs/capturas/tarea16-retoques-puertas.png` (demo
+`--falso`, puertas de redactor/novato encendidas con `n=` visible). Commits `9aabb95`
+(vista), `48c2570` (falso.py), `e66b4b5` (docs).
+
+Después, pedido aparte: un enlace "← volver" en la cabecera (oculto en la portada, visible
+viendo un run) que limpia `?run=`/`?modo=` de la URL sin tocarla a mano. Commit `756e722`.
+143/143 Python, 19/19 JS tras los dos cambios.
+
+### Tarea 17 — continuar un run parado (D24, D25)
+
+Josem quiere seguir un run donde se paró (sobre todo cortado por el tope de coste), en el
+momento o al abrirlo más tarde, sin relanzar lo que ya está hecho ni tirar dinero de más.
+Anexo 2026-10-04 (3) del plan; D24/D25 en la spec.
+
+**`enjambre/orquestar.py`** -- el cambio de fondo: el recorrido fijo del guion (cartógrafo →
+… → vueltas), que antes vivía entero dentro de `orquestar()`, se extrae a `_ejecutar(...)` y
+la comparten `orquestar()` (run nuevo, `hechos={}`) y la nueva `reanudar()` (D24) -- "no hay un
+segundo guion", el mismo código decide qué saltar:
+
+- Un lanzamiento se identifica por `(instancia, encargo)` y su número de aparición
+  (`_lanzamientos_hechos`, FIFO): la revisión del redactor repite el mismo encargo en cada
+  vuelta (sin `VUELTA=n`), así que solo la cuenta de apariciones ya hechas distingue cuántas
+  saltar. Hecho = `lanzado` seguido de `fin_agente` terminado Y el fichero que ese paso debía
+  dejar (`_ficheros_de_paso`) sigue en disco.
+- **D25** generaliza y sustituye el borrado puntual de D16 (antes, solo desde la vuelta 2):
+  antes de lanzar un paso DE VERDAD se borra lo que va a crear -- en una continuación, el paso
+  relanzado encuentra sitio limpio (la tool `Write` real no sobrescribe un fichero no leído en
+  la sesión). La revisión del redactor no borra nada (edita `articulo.md` en sitio).
+- "Vueltas hechas": si verificador y novato de la vuelta `n` ya están hechos y su copia en
+  `vueltas/<n>/` existe, se restaura a la raíz de salida (puede haber quedado ahí la de una
+  vuelta MÁS TARDÍA) y se evalúa sin relanzar nada ni repetir el evento `vuelta`; si falta uno,
+  se relanza solo ese.
+- `orquestar(..., falso: bool = False)` se anota en `params.falso` de `run_inicio` -- nunca
+  decide qué `lanzar` usar, eso lo sigue eligiendo `main()`.
+- CLI `--reanudar <salida>` (excluye `--repo`/`--run`; `--falso` se tolera porque
+  `pantalla.py` lo manda, ver el bug de abajo). Sale con código 2 si `params.falso` no existe
+  (run anterior a D24: no se adivina si era real).
+
+**`enjambre/pantalla.py`**: `POST /api/reanudar` (misma validación en capas que `/api/lanzar`:
+400 formato, 404 si no existe, 409 si no termina en `run_fin`/es `aprobado`/no tiene
+`params.falso`/ya hay un run en marcha). `_servir_directo` ya no cierra el SSE en el primer
+`run_fin` si el servidor tiene un proceso en marcha para ese MISMO (repo, run).
+
+**`pantalla/estado.js`/`mesa.js`/`index.html`**: caso `reanudado` en el reductor (quita
+`motivo`, toma `max_vueltas` de `params`, bitácora "reanudado (venía de ...)" -- no reinicia
+nada más). Botón "Continuar" en la cabecera (directo y repetición, un único sitio decide si
+hay algo que continuar), con "$ extra" y "vueltas máx." precargado.
+
+**Dos bugs reales, encontrados solo con verificación de punta a punta** (ningún test de los
+que pedía el plan los habría pillado -- los dos necesitaban un subproceso REAL, no el de
+mentira de los tests, o un navegador REAL, no solo `aplicar()`):
+
+1. `main()` rechazaba `--reanudar` combinado con `--falso` ("--reanudar excluye --repo, --run
+   y --falso") -- pero `/api/reanudar` SIEMPRE manda `--falso` cuando el run lo era (tal cual
+   pide el plan y comprueba su propio test). El subproceso real moría al arrancar, código 2,
+   sin escribir ni un `reanudado`. Arreglado: `--falso` ya no se valida como excluyente (el
+   modo lo decide siempre `_falso_del_run` leyendo el propio run, nunca este flag). Commit
+   `bd2376b`.
+2. Un `run_fin` cerraba el `EventSource` del CLIENTE incondicionalmente (en `mesa.js`), sin
+   mirar si el servidor pensaba seguir el fichero -- el fix del servidor (punto de arriba, "no
+   cierra si hay un proceso en marcha") no servía de nada si el cliente se desconectaba de
+   todos modos. Arreglado en `_arrancarDirecto`: un `run_fin` ya no cierra por sí solo;
+   `onerror` distingue ahora un cierre normal (ya se vio un `run_fin` y nada posterior lo ha
+   desmentido) de una desconexión real. Commit `763d3b5`.
+
+Verificado de punta a punta contra el servidor real (CDP, Chrome headless): portada → lanza con
+tope bajo (`--falso`) → para en `tope_coste` → clic en Continuar → el MISMO directo sigue solo
+y llega a `aprobado` sin recargar a mano, con cartógrafo/despiezador/lectores correctamente
+saltados (D24) y solo trazador/redactor/verificador/novato relanzados. También con la CLI
+directa (`--reanudar`) y los cuatro casos de rechazo (exclusión, aprobado, sin `params.falso`,
+sin `--repo`). Ningún run real: todo con `--falso`.
+
+Captura: `docs/capturas/tarea17-continuar.png`. Commits: `739e8c6` (backend D24/D25),
+`bd2376b` (fix CLI), `763d3b5` (vista). 153/153 Python, 19/19 JS.
 
 ### Nota histórica — D16 y el bloqueo de `Write` (YA RESUELTO, no es un pendiente)
 
