@@ -42,7 +42,11 @@ export function aplicar(estado, evento) {
   const addBitacora = (text) => {
     if (evento.t) {
       const time = evento.t.substring(11, 19); // Extract hh:mm:ss from ISO string
-      const agente = evento.agente || "";
+      // D20: nombre corto (sin el prefijo "lector-de-pieza:") -- es el mismo
+      // identificador que escena.js pinta bajo cada personaje, así que la
+      // bitácora y la escena hablan del mismo "nombre" en vez de uno completo
+      // y otro recortado.
+      const agente = evento.agente ? nombreCorto(evento.agente) : "";
       // Eventos sin agente (run_inicio, vuelta, run_fin) dejarían un hueco
       // doble entre la hora y el texto si no se colapsa.
       const line = `${time} ${agente} ${text}`.replace(/ {2,}/g, " ").trim();
@@ -209,4 +213,16 @@ function getRol(instancia) {
     return instancia.substring(0, colonIndex);
   }
   return instancia;
+}
+
+// nombreCorto(instancia) -- D20 punto 3/6: el identificador legible de un
+// agente, para el nombre bajo su personaje y para la bitácora.
+// "lector-de-pieza:llm" -> "llm" (la parte tras ":", el id de la pieza);
+// "verificador" (sin ":") -> "verificador" tal cual, porque ahí el rol ES el
+// nombre. Lo inverso de `getRol`: esa toma lo de ANTES de ":", esta lo de
+// DESPUÉS (o todo, si no hay ":").
+export function nombreCorto(instancia) {
+  if (typeof instancia !== "string") return instancia;
+  const colonIndex = instancia.indexOf(":");
+  return colonIndex === -1 ? instancia : instancia.slice(colonIndex + 1);
 }

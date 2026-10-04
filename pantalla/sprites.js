@@ -671,7 +671,13 @@ const FUENTE_BASE = {
   m: [".....", ".....", "##.#.", "#.#.#", "#.#.#", "#...#", "#...#"],
   n: [".....", ".....", "#.##.", "##..#", "#...#", "#...#", "#...#"],
   o: [".....", ".....", ".###.", "#...#", "#...#", "#...#", ".###."],
-  p: [".....", ".####", "#...#", "#...#", "####.", "#....", "#...."],
+  // D20 punto 7: la fila 1 dibujaba literalmente la "P" mayúscula (".####",
+  // bombo abierto a la izquierda) en vez de cerrar el bombo de la "p" por la
+  // izquierda como hacen las filas 4-6 (el tallo descendente, ya correcto).
+  // Verificado a mano contra "q" (bombo abierto a ambos lados en las mismas
+  // filas, tallo a la derecha): confirma que aquí el bombo debía cerrarse a
+  // la izquierda desde la fila 1, no solo desde la 4. Único cambio: esa fila.
+  p: [".....", "####.", "#...#", "#...#", "####.", "#....", "#...."],
   q: [".....", ".####", "#...#", "#...#", ".####", "....#", "....#"],
   r: [".....", ".....", "#.##.", "##..#", "#....", "#....", "#...."],
   s: [".....", ".....", ".####", "#....", ".###.", "....#", "####."],

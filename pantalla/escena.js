@@ -17,10 +17,9 @@
 // se escriben juntos, así que esta costura es segura; si se separan algún
 // día, pasar a hacerlo explícito por parámetros.
 
-import { inicial, aplicar, ROLES } from "./estado.js";
+import { inicial, aplicar, ROLES, nombreCorto } from "./estado.js";
 import {
   SPRITES,
-  FONDO,
   LORO,
   COLOR_TEXTO,
   ALTO_GLIFO,
@@ -31,6 +30,15 @@ import {
   medirTexto,
   cargarSpritesPersonajes,
 } from "./sprites.js";
+
+// D20: `FONDO` (cielo/cubierta/mástil/mesa larga/farolillos/timón... del
+// barco, Tarea 11) ya no se pinta -- Josem, revisión de la Tarea 11: con el
+// barco entero y el texto metidos en un lienzo de 320px no se sabía quién
+// hablaba ni se podía leer la bitácora. La escena pasa a ser neutra; el
+// estilo "Monkey Island" se limita a los personajes (D19), que SÍ se quedan.
+// `FONDO` sigue exportado desde sprites.js (no se ha tocado ese fichero más
+// que el bug de la fuente, D20 punto 7) por si una tarea futura lo reutiliza;
+// aquí simplemente ya no se importa.
 
 // ---------------------------------------------------------------------------
 // Estado de módulo: una sola fuente de verdad para pintar/alimentar, como
@@ -44,12 +52,15 @@ let _run = null;
 
 // Zonas (en coordenadas del lienzo, 320×200) calculadas en el último
 // `pintar`, para hit-test de click/hover sin duplicar la lógica de layout.
+// `_zonasInventario` (Tarea 11) desaparece con D20: el inventario ya no se
+// pinta dentro del lienzo (punto 6), así que no hace falta hit-test de click
+// sobre él -- el panel HTML nuevo tiene sus propios <button> con su propio
+// listener (`_actualizarInventario`, más abajo).
 let _zonasAgentes = []; // {x,y,w,h, instancia, agente}
-let _zonasInventario = []; // {x,y,w,h, item}
 
 // Rectángulos de los bocadillos ya dibujados en el fotograma actual
-// (incluido el del loro), para que `_dibujarBocadillo` pueda subir de
-// carril cuando dos agentes muy juntos hablan a la vez -- ver ahí.
+// (incluido el del loro), para que `_dibujarBocadillo` pueda subir en
+// vertical cuando dos agentes muy juntos hablan a la vez -- ver ahí.
 let _bocadillosDibujados = []; // {x1,y1,x2,y2}
 
 // Elementos de cabecera, rellenados una vez en `arrancar`.
@@ -89,6 +100,7 @@ export async function arrancar(lienzo, cabecera) {
     // en blanco para que no quede un canvas sin inicializar si alguien
     // navega hacia atrás desde una repetición.
     pintar(_ctx, _estado, Date.now());
+    _actualizarPaneles(_estado);
     return;
   }
 
@@ -117,8 +129,17 @@ export async function arrancar(lienzo, cabecera) {
 
 const ANCHO = 320;
 const ALTO = 200;
-const ALTO_ESCENA = 144;
-const ALTO_BARRA = 56;
+
+// D20: el lienzo se queda en 320×200 -- NO se encoge a 320×144. Los 56px
+// que antes ocupaba la barra SCUMM (bitácora + inventario pintados dentro
+// del lienzo, Tarea 11) ya no hacen falta para eso -- ese contenido vive
+// ahora en el panel HTML de debajo (punto 6) -- pero esos mismos 56px se
+// reaprovechan como alto de ESCENA: la colocación por orden de flujo (punto
+// 2) mete hasta 8 lectores en una rejilla de 2 columnas (4 filas de ~24-32px
+// cada una) y los bocadillos necesitan margen por encima de las cabezas para
+// subir sin chocar (punto 5, `_dibujarBocadillo`) -- con 144px de alto eso
+// quedaba muy justo para la fila superior de lectores. Ya no hay dos zonas
+// distintas (antes `ALTO_ESCENA`/`ALTO_BARRA`): todo el lienzo es la escena.
 
 // Duración de cada fotograma de animación, en ms de `ahoraMs` (reloj
 // virtual en repetición -- avanza ×velocidad --, reloj real en directo).
@@ -136,56 +157,81 @@ function _fotogramaDe(frames, ahoraMs) {
   return frames[i];
 }
 
-// Mobiliario de cubierta y el puesto del agente que trabaja en él (§5.3).
-// `fx,fy` posiciona el elemento de FONDO; `x,y` ancla la esquina superior
-// izquierda del sprite de 24×32 del agente, justo encima/detrás del
-// mueble para que quede a sus pies. Coordenadas elegidas a mano sobre el
-// lienzo de 320×144 (cielo 0-71, cubierta 72-143); revisadas con una
-// captura real (ver informe de la tarea), no solo a ojo de código.
-// (x,y de cada agente separados al menos ~40px en x o en y del resto: con
-// 24×32 por personaje, dos puestos en la misma columna y menos de eso de
-// diferencia en y se fusionan en un solo tótem apilado -- visto en la
-// primera captura real contra el servidor, corregido aquí.)
-const PUESTOS = {
-  despiezador: { furn: "cocina", fx: 12, fy: 50, x: 10, y: 46 }, // cocina, atrás a babor
-  redactor: { furn: "escritorio", fx: 254, fy: 48, x: 252, y: 46 }, // escritorio, atrás a estribor
-  cartografo: { furn: "mesaMapa", fx: 46, fy: 100, x: 44, y: 86 }, // mesa del mapa, delante
-  verificador: { furn: "barriles", fx: 238, fy: 106, x: 236, y: 92 }, // barriles, delante centro-estribor
-  trazador: { furn: "timon", fx: 288, fy: 98, x: 286, y: 80 }, // timón, delante a estribor
-  novato: { furn: null, x: 146, y: 10 }, // cofa, en lo alto del mástil
+// ---------------------------------------------------------------------------
+// Colocación por orden del flujo (D20 punto 2): izquierda a derecha,
+// cartógrafo · despiezador · lectores (rejilla de 2 columnas) · trazador ·
+// redactor · verificador y novato juntos al final. Coordenadas elegidas a
+// mano sobre el lienzo de 320×200, verificadas con una captura real (ver
+// informe de la tarea) -- no solo a ojo de código.
+// ---------------------------------------------------------------------------
+
+// y superior del sprite para todos los roles de una sola columna (todos
+// salvo lector-de-pieza): los alinea en una misma fila horizontal, para que
+// el avance izquierda->derecha del flujo se lea de un vistazo.
+const Y_AGENTE = 74;
+
+const PUESTOS_FLUJO = {
+  cartografo: 2,
+  despiezador: 40,
+  trazador: 168,
+  redactor: 204,
+  // "juntos al final" (punto 2): separados solo 2px entre sí (en vez de los
+  // ~36px del resto), para que se lean como pareja final del flujo y no
+  // como dos estaciones más -- sus nombres se solapan un poco a cambio
+  // (ambos recortados, `ANCHO_MAX_NOMBRE`), aceptado a propósito.
+  verificador: 240,
+  novato: 270,
 };
 
-const MASTIL_X = 140;
-const MASTIL_Y = 0;
-const MESA_LARGA_X = 84;
-const MESA_LARGA_Y = 104;
-
-// Fila de lectores sobre la mesa larga (hasta 8, tope del despiezador; si
-// llegan más se apilan encima, sin rediseñar — §5.3).
-// = ANCHO_PERSONAJE (24): con menos que eso dos lectores contiguos se pisan
-// (el sprite usa casi todo su ancho de 24px -- brazos/herramienta incluidos
-// -- así que cualquier paso menor solapa cuerpos). Visto en captura real
-// contra el servidor (Josem: "lector de piezas están muy juntos"),
-// corregido aquí: antes era 18.
-const LECTORES_PASO_X = ANCHO_PERSONAJE;
+// Rejilla de lectores: hasta 8, 2 columnas (punto 2). Columnas separadas
+// 36px (ANCHO_PERSONAJE=24 + margen, el mínimo para que no se pisen los
+// sprites de dos lectores contiguos -- lección de la Tarea 11 con la fila
+// única, D14). Si llegan más de 8 (no debería, tope documentado del
+// despiezador) se sigue apilando por fila sin rediseñar, igual que antes.
+//
+// `LECTOR_PASO_Y` deja sitio para personaje (32) + nombre (8) + el bocadillo
+// de la fila siguiente, que aparece justo encima de SU personaje -- con
+// menos separación, el bocadillo de la fila k+1 cae encima del NOMBRE de la
+// fila k (visto en una captura real contra el servidor: texto de la fila de
+// abajo mezclado con el nombre de la de arriba). `_dibujarBocadillo` ya
+// evita chocar con lo ya dibujado este fotograma (punto 5) -- por eso cada
+// nombre se registra también en `_bocadillosDibujados` justo después de
+// pintarlo (ver el bucle de agentes, más abajo): sin ese registro, un
+// bocadillo no "ve" los nombres y los pisa igual aunque haya sitio de sobra.
+const LECTOR_COLS_X = [82, 118];
+const LECTOR_FILA_Y0 = 14;
+const LECTOR_PASO_Y = 48;
 
 function _posicionLector(indice) {
-  const i = indice % 8;
-  const pila = Math.floor(indice / 8);
-  return { x: MESA_LARGA_X + 6 + i * LECTORES_PASO_X, y: MESA_LARGA_Y - 28 - pila * 10 };
+  const col = indice % 2;
+  const fila = Math.floor(indice / 2);
+  return { x: LECTOR_COLS_X[col], y: LECTOR_FILA_Y0 + fila * LECTOR_PASO_Y };
 }
 
 function _posicionAgente(rol, indiceLector) {
   if (rol === "lector-de-pieza") return _posicionLector(indiceLector);
-  const puesto = PUESTOS[rol];
-  return puesto ? { x: puesto.x, y: puesto.y } : { x: 150, y: 70 };
+  const x = PUESTOS_FLUJO[rol];
+  return { x: typeof x === "number" ? x : 150, y: Y_AGENTE };
 }
 
-// Farolillos fijos que parpadean (2 fotogramas en FONDO.farolillo).
-const FAROLES = [
-  { x: 36, y: 28 },
-  { x: 150, y: 24 },
-  { x: 288, y: 30 },
+// Paleta de 8 tonos para lectores (D20 punto 4): un color por INSTANCIA, no
+// por rol -- cada lector de pieza es una instancia distinta del mismo rol,
+// así que `COLOR_TEXTO["lector-de-pieza"]` (una sola entrada, Tarea 11) ya
+// no basta para distinguirlos. Elegida por contraste visual entre sí y
+// contra los colores de `COLOR_TEXTO` de los demás roles (no por una
+// fórmula de distancia de color, ver el mensaje de commit); el índice se
+// asigna por orden de aparición en `estado.agentes` (mismo contador
+// `indiceLector` que decide la posición en la rejilla), así que un mismo
+// lector conserva su color entre fotogramas mientras el run avanza.
+const COLOR_LECTORES = [
+  "#ff6b6b", // rojo coral
+  "#48dbfb", // cian
+  "#1dd1a1", // verde turquesa
+  "#feca57", // ámbar
+  "#a29bfe", // lavanda
+  "#ff9f43", // naranja
+  "#54a0ff", // azul
+  "#ee5a6f", // magenta
 ];
 
 /**
@@ -196,56 +242,74 @@ const FAROLES = [
  */
 export function pintar(ctx2d, estado, ahoraMs) {
   _zonasAgentes = [];
-  _zonasInventario = [];
   _bocadillosDibujados = [];
 
-  // --- Fondo: cielo, cubierta y mobiliario fijo del barco -----------------
-  dibujar(ctx2d, _fotogramaDe(FONDO.cielo, ahoraMs), 0, 0);
-  dibujar(ctx2d, _fotogramaDe(FONDO.cubierta, ahoraMs), 0, 72);
-  dibujar(ctx2d, _fotogramaDe(FONDO.mastil, ahoraMs), MASTIL_X, MASTIL_Y);
-  dibujar(ctx2d, _fotogramaDe(FONDO.mesaLarga, ahoraMs), MESA_LARGA_X, MESA_LARGA_Y);
-  for (const puesto of Object.values(PUESTOS)) {
-    if (puesto.furn) dibujar(ctx2d, _fotogramaDe(FONDO[puesto.furn], ahoraMs), puesto.fx, puesto.fy);
-  }
-  for (const farol of FAROLES) dibujar(ctx2d, _fotogramaDe(FONDO.farolillo, ahoraMs), farol.x, farol.y);
+  // --- Fondo neutro (D20 punto 1): sin barco -- un azul noche liso de
+  // fondo y una franja de suelo sutil, apenas más oscura, nada más. El
+  // estilo "Monkey Island" se queda en los personajes (D19), no en el
+  // decorado: Josem, revisión de la Tarea 11, "con el barco y el texto
+  // metidos en un lienzo de 320px no se sabía quién hablaba".
+  ctx2d.fillStyle = "#121a2e"; // mismo tono que usaba la banda media del cielo (Tarea 11), por continuidad
+  ctx2d.fillRect(0, 0, ANCHO, ALTO);
+  ctx2d.fillStyle = "#0a0e1a"; // suelo sutil: una sombra, no una cubierta de tablas
+  ctx2d.fillRect(0, ALTO - 14, ANCHO, 14);
 
-  // Fondo liso de la barra SCUMM (el arte ahí es solo este rectángulo: la
-  // barra en sí no forma parte de la escena 320×144).
-  ctx2d.fillStyle = "#3a2a1e";
-  ctx2d.fillRect(0, ALTO_ESCENA, ANCHO, ALTO_BARRA);
-
-  // --- Agentes --------------------------------------------------------------
+  // --- Agentes, colocados en el orden del flujo (D20 punto 2) ---------------
   // Orden de inserción de `estado.agentes` ya es estable (claves string),
-  // así que basta un contador para numerar a los lectores en fila.
+  // así que basta un contador para numerar a los lectores en la rejilla (y,
+  // con él, asignarles también su color de `COLOR_LECTORES`).
   let indiceLector = 0;
   for (const [instancia, agente] of Object.entries(estado.agentes || {})) {
     const rol = agente.rol;
-    const indice = rol === "lector-de-pieza" ? indiceLector++ : 0;
+    const esLector = rol === "lector-de-pieza";
+    const indice = esLector ? indiceLector++ : 0;
     const pos = _posicionAgente(rol, indice);
+    // Color por instancia (punto 4): un lector saca el suyo de la paleta de
+    // 8 por su turno de aparición; el resto de roles sigue con el color fijo
+    // de `COLOR_TEXTO` (Tarea 10/11) que ya tenían.
+    const color = esLector ? COLOR_LECTORES[indice % COLOR_LECTORES.length] : COLOR_TEXTO[rol] || "#ffffff";
+
     const frames = SPRITES[rol] && SPRITES[rol][agente.estado];
     const fotograma = _fotogramaDe(frames, ahoraMs);
     if (fotograma) dibujar(ctx2d, fotograma, pos.x, pos.y);
 
+    // Nombre bajo el personaje, siempre visible (punto 3): el rol, o el id
+    // de la pieza para los lectores -- mismo `nombreCorto` que usa la
+    // bitácora (estado.js), para que escena y bitácora hablen del mismo
+    // nombre. Centrado en el personaje y recortado a `ANCHO_MAX_NOMBRE`
+    // (no solo al borde del lienzo): con nombres de rol largos
+    // ("despiezador", "verificador"...) y estaciones a menos de 70px entre
+    // sí en 320px de ancho, un nombre sin recortar se come el de al lado --
+    // visto en una captura real contra el servidor. El recorte width-aware
+    // (`_recortarTexto`, igual que el que ya usaba el inventario en la
+    // Tarea 11) deja la mayoría legibles del todo; los más largos se leen
+    // abreviados con un "." final, nunca solapados con el vecino.
+    const nombre = _recortarTexto(nombreCorto(instancia), ANCHO_MAX_NOMBRE);
+    const anchoNombre = medirTexto(nombre);
+    const xNombre = Math.max(0, Math.min(ANCHO - anchoNombre, Math.round(pos.x + ANCHO_PERSONAJE / 2 - anchoNombre / 2)));
+    const yNombre = pos.y + ALTO_PERSONAJE + 1;
+    dibujarTexto(ctx2d, nombre, xNombre, yNombre, color);
+    // Se registra como "ya dibujado este fotograma" (mismo mecanismo que
+    // los bocadillos, ver `_dibujarBocadillo`): si no, el bocadillo de la
+    // fila de lectores de abajo lo pisa aunque haya sitio de sobra más
+    // arriba -- ver el comentario de `LECTOR_PASO_Y`.
+    _bocadillosDibujados.push({ x1: xNombre, y1: yNombre, x2: xNombre + anchoNombre, y2: yNombre + ALTO_GLIFO });
+
     _zonasAgentes.push({ x: pos.x, y: pos.y, w: ANCHO_PERSONAJE, h: ALTO_PERSONAJE, instancia, agente });
 
     // Bocadillo centrado sobre la cabeza, recortado al lienzo; se borra a
-    // los ~3s de `bocadillo.t` (§5.3).
+    // los ~3s de `bocadillo.t` (§5.3). Mismo color que el nombre (punto 4).
     if (agente.bocadillo && agente.bocadillo.t) {
       const edadMs = ahoraMs - Date.parse(agente.bocadillo.t);
       if (edadMs >= 0 && edadMs < 3000) {
-        _dibujarBocadillo(
-          ctx2d,
-          agente.bocadillo.texto,
-          pos.x + ANCHO_PERSONAJE / 2,
-          pos.y - 2,
-          COLOR_TEXTO[rol] || "#ffffff",
-        );
+        _dibujarBocadillo(ctx2d, agente.bocadillo.texto, pos.x + ANCHO_PERSONAJE / 2, pos.y - 2, color);
       }
     }
   }
 
   // --- El loro: vuela del borde del lienzo al agente denegado -------------
-  // (misma regla de visibilidad ~3s que los bocadillos, mismo campo `t`).
+  // (misma regla de visibilidad ~3s que los bocadillos, mismo campo `t`;
+  // mecánica sin cambios -- D20 no la toca, solo el decorado alrededor).
   if (estado.loro && estado.loro.t) {
     const edadMs = ahoraMs - Date.parse(estado.loro.t);
     if (edadMs >= 0 && edadMs < 3000) {
@@ -261,86 +325,61 @@ export function pintar(ctx2d, estado, ahoraMs) {
     }
   }
 
-  // --- Barra inferior: bitácora a la izquierda... --------------------------
-  const lineas = (estado.bitacora || []).slice(-5);
-  lineas.forEach((linea, i) => {
-    _dibujarTextoRecortado(ctx2d, linea, 4, ALTO_ESCENA + 4 + i * 9, 216, "#e8e0c8");
-  });
+  // D20 punto 6: bitácora e inventario YA NO se pintan aquí -- viven en el
+  // panel HTML bajo el lienzo (`_actualizarBitacora`/`_actualizarInventario`,
+  // más abajo), que cada llamador de `pintar` refresca a la vez.
+}
 
-  // ...e inventario a la derecha: un icono por fichero, con el nombre corto
-  // (basename) debajo para que no haga falta pasar el ratón para leerlo
-  // (pedido de Josem: "antes solo había iconos sin nombre"). El hover
-  // (`lienzo.title`, más abajo) sigue dando la ruta completa.
-  const inventario = estado.inventario || [];
-  const colInicioX = 224;
-  const iconoLado = 14;
-  const pasoCol = 48;
-  const porFila = Math.max(1, Math.floor((ANCHO - colInicioX - 2) / pasoCol));
-  inventario.forEach((item, i) => {
-    const fila = Math.floor(i / porFila);
-    const col = i % porFila;
-    const x = colInicioX + col * pasoCol;
-    const y = ALTO_ESCENA + 3 + fila * (iconoLado + 11);
-    if (y > ALTO_ESCENA + ALTO_BARRA - iconoLado - 2) return; // sin sitio: no desborda el lienzo (§5.3, "no rediseñar")
-    ctx2d.fillStyle = "#c8a24a";
-    ctx2d.fillRect(x, y, iconoLado, iconoLado);
-    ctx2d.strokeStyle = "#000000";
-    ctx2d.strokeRect(x + 0.5, y + 0.5, iconoLado - 1, iconoLado - 1);
-    const nombreCorto = (item.ruta || "").split("/").pop() || "?";
-    _dibujarTextoRecortado(ctx2d, nombreCorto, x, y + iconoLado + 1, pasoCol - 2, "#e8e0c8");
-    _zonasInventario.push({ x, y, w: iconoLado, h: iconoLado, item });
-  });
+// Ancho máximo de un nombre bajo un personaje (punto 3) -- ver el comentario
+// en el bucle de agentes, más arriba. 34px deja sitio para la mayoría de
+// roles enteros ("cartografo"=60px se recorta a "cartogr." pero
+// "trazador"/"redactor"/"novato" caben enteros) sin que el nombre invada la
+// estación de al lado en los huecos de ~36-40px que separan los puestos del
+// flujo de un solo personaje.
+const ANCHO_MAX_NOMBRE = 34;
+
+// Recorte por medida real de la fuente de mapa de bits (igual que el que
+// usaba el inventario dentro del lienzo en la Tarea 11, antes de que D20 lo
+// sacara al panel HTML -- el mismo patrón sigue haciendo falta aquí, para
+// los nombres): añade un "." final mientras no quepa en `anchoMax`.
+function _recortarTexto(texto, anchoMax) {
+  let recortado = String(texto);
+  if (medirTexto(recortado) > anchoMax) {
+    while (recortado.length > 1 && medirTexto(`${recortado}.`) > anchoMax) {
+      recortado = recortado.slice(0, -1);
+    }
+    recortado = `${recortado}.`;
+  }
+  return recortado;
 }
 
 // Bocadillo de diálogo: centrado horizontalmente sobre `cx`, con el pie en
 // `yInferior`, recortado para no salirse del lienzo de 320 de ancho.
 //
-// Con los lectores en fila (hasta 8, separados solo ANCHO_PERSONAJE=24px),
-// sus bocadillos son casi siempre más anchos que la separación entre ellos
-// -- varios a la vez se escribían unos encima de otros (Josem, captura real:
-// "su texto se sobreescribe"). Si el rectángulo candidato choca en x e y con
-// uno ya dibujado este mismo fotograma, sube un carril (una altura de
-// glifo) y reintenta, hasta MAX_CARRILES; si para entonces sigue chocando
-// (muchos lectores hablando literalmente a la vez) se dibuja de todos
-// modos en el último carril probado -- ilegible en el peor caso, pero ya
-// no 100% de las veces como antes, y sin rediseñar el layout de la mesa.
-// 9 carriles cubre el peor caso real: hasta 8 lectores simultáneos (tope
-// documentado en `_posicionLector` antes de apilar) más el bocadillo del
-// loro -- probado con 5 a la vez (4 lectores + loro) a 4 carriles y seguía
-// chocando uno; con 9 cabe de sobra en el cielo del lienzo (banda 0-71,
-// carril 8 queda en y≈3) sin tocar nada más de la escena.
-const PASO_CARRIL = ALTO_GLIFO + 1;
-const MAX_CARRILES = 9;
-
+// D20 punto 5 quita el sistema de "carriles anticolisión" de la Tarea 11
+// (una tabla fija de hasta 9 alturas, pensada para 8 lectores apretados en
+// una sola fila de 24px de paso). Con la rejilla nueva (2 columnas, mucho
+// más separadas entre sí -- `LECTOR_COLS_X`) la colisión horizontal entre
+// dos hablantes distintos ya es rara, así que basta una regla mucho más
+// simple: si el candidato choca con un bocadillo ya pintado este mismo
+// fotograma, sube una altura de glifo y lo intenta otra vez, siempre
+// centrado en la misma `x` del hablante -- NUNCA se desliza en horizontal
+// hacia otro sitio, como pide el plan. Si llega a y=0 (techo del lienzo) se
+// dibuja ahí de todos modos: ilegible en el peor caso de muchísimos
+// hablantes a la vez, pero ya no decidido por una tabla de carriles fija.
 function _dibujarBocadillo(ctx2d, texto, cx, yInferior, color) {
   if (!texto) return;
   const ancho = medirTexto(texto);
   const x = Math.max(1, Math.min(ANCHO - ancho - 1, Math.round(cx - ancho / 2)));
   let y = Math.max(0, yInferior - ALTO_GLIFO);
-  for (let carril = 1; carril < MAX_CARRILES; carril++) {
-    const choca = _bocadillosDibujados.some(
-      (b) => x < b.x2 && x + ancho > b.x1 && y < b.y2 && y + ALTO_GLIFO > b.y1,
-    );
-    if (!choca || y <= 0) break;
-    y = Math.max(0, y - PASO_CARRIL);
+  while (
+    y > 0 &&
+    _bocadillosDibujados.some((b) => x < b.x2 && x + ancho > b.x1 && y < b.y2 && y + ALTO_GLIFO > b.y1)
+  ) {
+    y = Math.max(0, y - (ALTO_GLIFO + 1));
   }
   _bocadillosDibujados.push({ x1: x, y1: y, x2: x + ancho, y2: y + ALTO_GLIFO });
   dibujarTexto(ctx2d, texto, x, y, color);
-}
-
-// Recorte por medida real de la fuente de mapa de bits (ya no por conteo
-// tosco de caracteres, como en el render provisional de T10): añade un "."
-// final mientras no quepa.
-function _dibujarTextoRecortado(ctx2d, texto, x, y, anchoMax, color) {
-  if (!texto) return;
-  let recortado = String(texto);
-  if (medirTexto(recortado) > anchoMax) {
-    while (recortado.length > 1 && medirTexto(recortado + ".") > anchoMax) {
-      recortado = recortado.slice(0, -1);
-    }
-    recortado = `${recortado}.`;
-  }
-  dibujarTexto(ctx2d, recortado, x, y, color);
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +396,7 @@ export function alimentar(evento) {
   _estado = aplicar(_estado, evento);
   _actualizarCabecera();
   if (_ctx) pintar(_ctx, _estado, Date.now());
+  _actualizarPaneles(_estado);
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +426,53 @@ function _actualizarCabecera(motivoForzado) {
   _cab.coste.textContent = typeof _estado.coste === "number" ? `$${_estado.coste.toFixed(4)}` : "—";
   _cab.reloj.textContent = _estado.t ? _estado.t.substring(11, 19) : "—";
   _cab.motivo.textContent = motivoForzado || _estado.motivo || "—";
+}
+
+// ---------------------------------------------------------------------------
+// Panel HTML de bitácora e inventario (D20 punto 6) — fuera del lienzo.
+// Cada llamador que antes solo llamaba a `pintar` ahora llama también a
+// `_actualizarPaneles` justo después, para que las dos vistas (lienzo y
+// panel) se refresquen siempre juntas sobre el mismo `estado`.
+// ---------------------------------------------------------------------------
+
+function _actualizarPaneles(estado) {
+  _actualizarBitacora(estado);
+  _actualizarInventario(estado);
+}
+
+function _actualizarBitacora(estado) {
+  const lista = document.getElementById("lista-bitacora");
+  if (!lista) return;
+  const lineas = estado.bitacora || [];
+  // "Las más recientes arriba" (punto 6): el array guarda la más reciente al
+  // final (`push`, estado.js) -- aquí solo se invierte el orden de pintado,
+  // sin tocar esa convención del estado.
+  lista.innerHTML = "";
+  for (let i = lineas.length - 1; i >= 0; i--) {
+    const li = document.createElement("li");
+    li.textContent = lineas[i];
+    lista.appendChild(li);
+  }
+}
+
+function _actualizarInventario(estado) {
+  const lista = document.getElementById("lista-inventario");
+  if (!lista) return;
+  const inventario = estado.inventario || [];
+  lista.innerHTML = "";
+  for (const item of inventario) {
+    const li = document.createElement("li");
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.className = "item-inventario";
+    // Nombre de fichero COMPLETO (ruta relativa a `salida`, punto 6) -- ya
+    // viene así en `item.ruta` (ver `_ruta_relativa_a_salida` en
+    // lanzador.py), nada que recortar aquí.
+    boton.textContent = item.ruta;
+    boton.onclick = () => _abrirFicheroEnPanel(item.ruta);
+    li.appendChild(boton);
+    lista.appendChild(li);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +608,7 @@ async function _arrancarRepeticion(repo, run) {
     // con un reloj real (`Date.now()`-like), no comprimido.
     const ahoraMs = k > 0 ? Date.parse(eventos[k - 1].t) : t0;
     pintar(_ctx, _estado, ahoraMs);
+    _actualizarPaneles(_estado);
     if (barra) barra.value = String(k);
   }
 
@@ -592,6 +680,7 @@ function _arrancarDirecto(repo, run) {
   _estado.run = run;
   _actualizarCabecera("EN DIRECTO");
   pintar(_ctx, _estado, Date.now());
+  _actualizarPaneles(_estado);
   ocultarAviso();
 
   let terminado = false;
@@ -644,16 +733,19 @@ function _arrancarDirecto(repo, run) {
     _estado = inicial();
     _estado.run = run;
     _actualizarCabecera("conexión perdida, reintentando…");
+    _actualizarPaneles(_estado);
   };
 }
 
 // ---------------------------------------------------------------------------
-// Interacción con el lienzo: hover (tooltip nativo vía `title`) y click
-// (inventario -> panel lateral). Elección documentada en el informe de la
-// tarea: un único <canvas> con hit-test manual contra las zonas calculadas
-// en el último `pintar`, en vez de superponer elementos HTML invisibles —
-// más simple de mantener sincronizado con un render que se repinta en cada
-// frame.
+// Interacción con el lienzo: hover (tooltip nativo vía `title`) sobre un
+// agente. D20 punto 6 quita el click sobre el inventario pintado dentro del
+// lienzo (ya no existe ahí) -- el panel HTML de inventario tiene sus
+// propios <button>, cada uno con su listener (`_actualizarInventario`, más
+// arriba). Elección documentada en el informe de la tarea: un único
+// <canvas> con hit-test manual contra las zonas calculadas en el último
+// `pintar`, en vez de superponer elementos HTML invisibles — más simple de
+// mantener sincronizado con un render que se repinta en cada frame.
 // ---------------------------------------------------------------------------
 
 function _coordsDesdeEvento(lienzo, evt) {
@@ -686,13 +778,6 @@ function _instalarInteraccionLienzo(lienzo) {
     const duracion = typeof a.duracion_s === "number" ? `${a.duracion_s.toFixed(1)}s` : "—";
     const coste = typeof a.coste_usd === "number" ? `$${a.coste_usd.toFixed(4)}` : "—";
     lienzo.title = `${zona.instancia}\nmodelo: ${modelo}\nduración: ${duracion}\ncoste: ${coste}`;
-  });
-
-  lienzo.addEventListener("click", (evt) => {
-    const { x, y } = _coordsDesdeEvento(lienzo, evt);
-    const zona = _zonaEnPunto(_zonasInventario, x, y);
-    if (!zona) return;
-    _abrirFicheroEnPanel(zona.item.ruta);
   });
 }
 

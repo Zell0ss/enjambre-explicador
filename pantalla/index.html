@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>enjambre — pantalla</title>
+<!-- D20 punto 6: fuente VT323 (Google Fonts) para el panel de bitácora e
+     inventario que sale del lienzo. Si la red no la trae (offline, bloqueo
+     de terceros), la hoja de abajo cae a monospace vía
+     font-family: "VT323", monospace -- nunca una fuente sin servir rompe el
+     panel, solo cambia su aspecto. -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
 <style>
   :root {
     color-scheme: dark;
@@ -151,6 +159,73 @@
   /* 360px de ancho sin scroll horizontal (plan, Tarea 10): nada aquí fija
      un ancho mayor que 100vw; el lienzo se escala por JS a ×1 cuando no cabe
      a ×3/×4 (ver escena.js:_escalarLienzo). */
+
+  /* D20 punto 6: bitácora e inventario, antes dentro del lienzo (Tarea 11),
+     ahora un panel HTML normal debajo -- por eso usan su propia fuente
+     (VT323, más legible a tamaño de texto real que la fuente de mapa de
+     bits de 5×7, pensada para 320px de lienzo) en vez de la del canvas. */
+  .panel-registro {
+    width: 100%;
+    max-width: 640px;
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-family: "VT323", monospace;
+    font-size: 18px;
+    line-height: 1.25;
+  }
+  .panel-registro > div {
+    flex: 1 1 260px;
+    min-width: 220px;
+    background: #1a2230;
+    border: 1px solid #333c4a;
+    border-radius: 4px;
+    padding: 6px 8px;
+    box-sizing: border-box;
+  }
+  .panel-registro h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-family: "Courier New", "DejaVu Sans Mono", monospace; /* cabeceras con la fuente normal, el contenido con VT323 */
+    color: #f2d06b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .panel-registro ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  /* Bitácora: líneas completas, sin recorte (a diferencia del lienzo de
+     320px) -- se envuelven si no caben. */
+  #lista-bitacora li {
+    white-space: normal;
+    word-break: break-word;
+    border-bottom: 1px solid #222a35;
+    padding: 1px 0;
+  }
+  #lista-inventario li {
+    border-bottom: 1px solid #222a35;
+    padding: 1px 0;
+  }
+  .item-inventario {
+    background: none;
+    border: none;
+    color: #8fd0e8;
+    font-family: inherit;
+    font-size: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 0;
+    text-align: left;
+    word-break: break-all;
+  }
+  .item-inventario:hover {
+    color: #c9a0e8;
+  }
 </style>
 </head>
 <body>
@@ -173,6 +248,21 @@
     </div>
 
     <div id="aviso-directo" class="aviso-directo" hidden></div>
+
+    <!-- D20 punto 6: bitácora e inventario fuera del lienzo. Las rellena
+         escena.js (_actualizarBitacora/_actualizarInventario) cada vez que
+         se repinta el lienzo, con el mismo `estado` -- nunca quedan
+         desincronizados entre sí. -->
+    <div id="panel-registro" class="panel-registro">
+      <div>
+        <h2>Bitácora</h2>
+        <ul id="lista-bitacora"></ul>
+      </div>
+      <div>
+        <h2>Inventario</h2>
+        <ul id="lista-inventario"></ul>
+      </div>
+    </div>
   </div>
 </main>
 

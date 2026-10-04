@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inicial, aplicar, ROLES } from "../../pantalla/estado.js";
+import { inicial, aplicar, ROLES, nombreCorto } from "../../pantalla/estado.js";
 
 const ev = (tipo, extra = {}) => ({ t: "2026-10-03T00:00:01.000", run: "r1", tipo, ...extra });
 const corre = (...evs) => evs.reduce(aplicar, inicial());
@@ -101,4 +101,17 @@ test("fin_agente no repite el nombre del agente y muestra estado/duración/coste
   assert.match(ultima, /terminado/);
   assert.match(ultima, /30/);
   assert.match(ultima, /0\.02/);
+});
+
+// --- D20: nombre corto de instancia, usado para el nombre bajo cada
+// personaje y para la bitácora (Tarea 14, Anexo 2026-10-04).
+test("nombre corto de instancia", () => {
+  assert.equal(nombreCorto("lector-de-pieza:llm"), "llm");
+  assert.equal(nombreCorto("verificador"), "verificador");
+});
+
+test("la bitácora usa el nombre corto", () => {
+  const s = corre(ev("run_inicio"), ev("estado", { agente: "lector-de-pieza:datos", estado: "leyendo", detalle: "x" }));
+  assert.ok(s.bitacora.at(-1).includes(" datos "));
+  assert.ok(!s.bitacora.at(-1).includes("lector-de-pieza"));
 });
