@@ -220,7 +220,7 @@ const _filasLectores = new Map();
 // `COLOR_LECTORES` -- igual que `indiceLector` en la vieja escena.js.
 const _indicesLectores = new Map();
 
-function _crearFilaLector(instancia) {
+function _crearFilaLector() {
   const el = document.createElement("div");
   el.className = "fila-lector";
   const anchoCanvas = ANCHO_PERSONAJE * 2;
@@ -323,7 +323,7 @@ function _actualizarLectores(carta, estado, ahoraMs) {
     if (!_indicesLectores.has(instancia)) _indicesLectores.set(instancia, _indicesLectores.size);
     let fila = _filasLectores.get(instancia);
     if (!fila) {
-      fila = _crearFilaLector(instancia);
+      fila = _crearFilaLector();
       _filasLectores.set(instancia, fila);
       if (filasCont) filasCont.appendChild(fila.el);
     }
@@ -650,7 +650,6 @@ function _recalcularFlechas(estado) {
   const maxV = typeof estado.max_vueltas === "number" ? String(estado.max_vueltas) : "?";
   const etiquetaVuelta = `vuelta ${vuelta}/${maxV}`;
 
-  const midDespLect = (g.desp.right + g.lect.x) / 2;
   const midLectTraz = (g.lect.right + g.traz.x) / 2;
   // Las dos columnas de "ida" (redactor->verificador, redactor->novato) y
   // "vuelta" (verificador->redactor, novato->redactor) comparten el mismo
