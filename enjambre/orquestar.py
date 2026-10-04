@@ -664,9 +664,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _crear_analizador().parse_args(argv)
 
     if args.reanudar is not None:
-        if args.repo is not None or args.run is not None or args.falso:
-            print("--reanudar excluye --repo, --run y --falso", file=sys.stderr)
+        if args.repo is not None or args.run is not None:
+            print("--reanudar excluye --repo y --run", file=sys.stderr)
             return 2
+        # `--falso` NO se valida como excluyente aquí (a diferencia de
+        # --repo/--run): el modo real lo decide siempre `_falso_del_run`,
+        # nunca este flag -- pero `/api/reanudar` (pantalla.py) sí lo pasa,
+        # derivado de `params.falso` del propio run, así que rechazarlo aquí
+        # rompería esa costura. Pasarlo a mano desde la terminal (sin pasar
+        # por la pantalla) es inútil pero inofensivo: se ignora.
 
         es_falso = _falso_del_run(args.reanudar)
         if es_falso is None:
