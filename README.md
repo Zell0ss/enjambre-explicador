@@ -56,3 +56,6 @@ da al continuar es dinero EXTRA, no un total nuevo; el modo (`--falso` o
 real) lo decide siempre el propio run, nunca quien lo continúa.
 
 Ver `CLAUDE.md` para contexto arquitectónico.
+
+
+[Explicacion hecha con el propio enjambre](articulo.md)
