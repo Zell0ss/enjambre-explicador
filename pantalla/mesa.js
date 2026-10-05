@@ -62,6 +62,16 @@ let _cartas = {}; // rol -> elemento <div class="carta">, más "lector-de-pieza"
 // sin navegador, cómo se percibe exactamente ahí.
 const MS_POR_FOTOGRAMA = 450;
 
+// En directo, `_render` solo se llamaba dentro de `alimentar()` (un evento
+// SSE nuevo) -- sin ningún repintado propio, el reloj real (`Date.now()`)
+// que recibe `_pintarSprite` nunca cambiaba entre eventos, así que los
+// sprites se quedaban congelados (mismo síntoma que el reloj congelado de
+// repetición, visto por Josem). Bastante más fino que `MS_POR_FOTOGRAMA`
+// (450ms) para no perderse el cambio de fotograma por el redondeo del
+// `setInterval`, pero sin pasarse: esto solo repinta, no hace fetch ni toca
+// el SSE, así que no hay presupuesto de red que proteger.
+const TICK_DIRECTO_MS = 150;
+
 function _fotogramaDe(frames, ahoraMs) {
   if (!frames || frames.length === 0) return null;
   const i = Math.floor(Math.max(0, ahoraMs) / MS_POR_FOTOGRAMA) % frames.length;
@@ -991,15 +1001,39 @@ async function _arrancarRepeticion(repo, run) {
     return k;
   }
 
+  // `ahoraMs` tiene que seguir en la base REAL de los timestamps `t` (razón
+  // original de escena.js T11: que la edad de bocadillo/papel/puerta,
+  // `ahoraMs - Date.parse(marca)`, no salga negativa tras un hueco
+  // comprimido) -- pero fijarlo en el `t` del último evento aplicado lo
+  // deja CONGELADO entre dos eventos, así que los sprites solo cambiaban de
+  // fotograma cuando saltaba `k` (lo que Josem notó: Zzz/parpadeo parados
+  // mientras no hay evento nuevo). Interpola linealmente entre el `t` real
+  // del evento anterior y el del siguiente, con la MISMA fracción que ya
+  // avanza `tVirtual` dentro de ese tramo de `vTimes` -- así el reloj de
+  // fotogramas se mueve a la vez que la barra/velocidad (nunca se adelanta
+  // a un evento que aún no ha pasado) y las ventanas de "encendido"
+  // (`VENTANA_VIRTUAL_MS`/`GRACIA_REAL_MS`, que ya convivían con un reloj
+  // impreciso en ×4/×16) siguen viendo una edad real coherente, ahora
+  // continua en vez de a saltos.
+  function _ahoraMsInterpolado(k) {
+    const baseReal = k > 0 ? Date.parse(eventos[k - 1].t) : t0;
+    const baseVirtual = k > 0 ? vTimes[k - 1] : 0;
+    if (k >= eventos.length) {
+      // tras el último evento no hay "siguiente" con el que interpolar:
+      // sigue el reloj real 1:1 con lo que avance `tVirtual` desde ahí.
+      return baseReal + (tVirtual - baseVirtual);
+    }
+    const siguienteReal = Date.parse(eventos[k].t);
+    const siguienteVirtual = vTimes[k];
+    const tramo = siguienteVirtual - baseVirtual;
+    const fraccion = tramo > 0 ? Math.min(1, Math.max(0, (tVirtual - baseVirtual) / tramo)) : 1;
+    return baseReal + fraccion * (siguienteReal - baseReal);
+  }
+
   function _aplicarHasta(k) {
     _estado = eventos.slice(0, k).reduce(aplicar, inicial());
     _actualizarCabecera();
-    // Misma razón que en escena.js (T11): `ahoraMs` tiene que estar en la
-    // base REAL de los timestamps `t` (no la comprimida de `vTimes`), para
-    // que la edad de bocadillo/papel/puerta (`Date.parse(t)` real) no salga
-    // negativa tras un hueco comprimido.
-    const ahoraMs = k > 0 ? Date.parse(eventos[k - 1].t) : t0;
-    _render(_estado, ahoraMs);
+    _render(_estado, _ahoraMsInterpolado(k));
     if (barra) barra.value = String(k);
   }
 
@@ -1094,6 +1128,14 @@ function _arrancarDirecto(repo, run) {
   _render(_estado, Date.now());
   ocultarAviso();
 
+  // Repinta con el reloj real aunque no llegue ningún evento SSE nuevo --
+  // sin esto `_render` solo se disparaba desde `alimentar()`, así que un
+  // agente "esperando" se quedaba sin Zzz moviéndose y sin parpadeo entre
+  // eventos (ver comentario de `TICK_DIRECTO_MS`). Se para en el cierre
+  // normal del `onerror` de abajo, para no dejarlo corriendo sobre un
+  // `EventSource` ya cerrado del todo.
+  const tickId = setInterval(() => _render(_estado, Date.now()), TICK_DIRECTO_MS);
+
   // D24 (Tarea 17): un `run_fin` ya NO cierra el directo por sí solo -- el
   // servidor (`_servir_directo`) sigue el fichero más allá del primer
   // `run_fin` si hay una continuación en marcha para este mismo run, así
@@ -1145,7 +1187,9 @@ function _arrancarDirecto(repo, run) {
       // nada posterior lo desmintiera -- el final normal (D24: sin
       // continuación en marcha), no una desconexión real. `es.close()`
       // evita que el reintento automático de EventSource vuelva a pedir
-      // todo el fichero para nada.
+      // todo el fichero para nada; `clearInterval` para el repintado
+      // periódico, que ya no tiene nada nuevo que mostrar.
+      clearInterval(tickId);
       es.close();
       return;
     }
