@@ -407,6 +407,16 @@ async def test_no_se_reanuda_un_run_aprobado(repo, tmp_path):
         await reanudar(tmp_path / "s" / "agora" / "r1", hacer_lanzar_falso())
 
 
+async def test_reanudar_no_repite_el_borrador_del_redactor(repo, tmp_path):
+    lanzar = hacer_lanzar_falso()
+    fin1 = await orquestar(repo, tmp_path / "s", lanzar, run="r1", tope_usd=0.065)  # para tras el borrador
+    assert fin1["motivo"] == "tope_coste"
+    fin2 = await reanudar(tmp_path / "s" / "agora" / "r1", lanzar)
+    assert fin2["motivo"] == "aprobado"
+    _, despues = _tras_reanudar(eventos(tmp_path / "s"))
+    assert lanzados(despues) == ["verificador", "novato"]
+
+
 # --- num_turns: de Resultado al evento fin_agente ---------------------------
 
 

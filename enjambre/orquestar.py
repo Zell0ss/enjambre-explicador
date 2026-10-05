@@ -113,13 +113,15 @@ def _parse_encargo(encargo: str) -> dict[str, str]:
 
 def _ficheros_de_paso(rol: str, campos: dict[str, str]) -> list[str]:
     """D25: qué ficheros (relativos a `salida`) deja un paso -- los que hay
-    que borrar antes de lanzarlo DE VERDAD, y los que demuestran que una
-    aparición anterior en `eventos.jsonl` está "hecha" (D24, misma lista:
-    ver `_lanzamientos_hechos`). La revisión del redactor (`MODO=revision`)
-    devuelve `[]` a propósito -- no crea un fichero propio distinguible
-    (edita `articulo.md` en sitio), así que ni se borra nada antes de
-    relanzarla ni se exige ningún fichero para darla por hecha (D25: "la
-    revisión del redactor no borra nada")."""
+    que borrar antes de lanzarlo DE VERDAD. La revisión del redactor
+    (`MODO=revision`) devuelve `[]` a propósito -- no crea un fichero
+    propio distinguible (edita `articulo.md` en sitio), así que no se borra
+    nada antes de relanzarla (D25: "la revisión del redactor no borra
+    nada").
+
+    NO se usa para decidir si una aparición anterior está "hecha" -- ver
+    `_ficheros_prueba_hecho`, que es una lista distinta para el borrador
+    del redactor (hallazgo de Josem, D24: ver su docstring)."""
     if rol == "cartografo":
         return ["mapa.md"]
     if rol == "despiezador":
@@ -139,13 +141,31 @@ def _ficheros_de_paso(rol: str, campos: dict[str, str]) -> list[str]:
     return []
 
 
+def _ficheros_prueba_hecho(rol: str, campos: dict[str, str]) -> list[str]:
+    """D24: qué ficheros demuestran que una aparición anterior de este paso
+    ya está hecha (`_lanzamientos_hechos`, más abajo). Coincide con la
+    lista que borra D25 (`_ficheros_de_paso`) salvo para el BORRADOR del
+    redactor: D25 borra `articulo.md` Y `cambios.md` (por si acaso, antes
+    de relanzarlo de verdad), pero el borrador solo ESCRIBE `articulo.md`
+    -- `cambios.md` no existe hasta la primera revisión. Probar con la
+    lista de borrado completa hacía que el borrador NUNCA contara como
+    hecho (`cambios.md` nunca existe en ese momento) y se repitiera
+    siempre al continuar, aunque ya estuviera terminado y su fichero en
+    disco. Encontrado por Josem contra un run real
+    (Claude-Fables-20261004-220410): repitió un borrador de 0,46 $ al
+    continuar."""
+    if rol == "redactor" and campos.get("MODO") != "revision":
+        return ["articulo.md"]
+    return _ficheros_de_paso(rol, campos)
+
+
 def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tuple[str, str], int]:
     """D24: qué lanzamientos del `eventos.jsonl` de un run anterior ya están
     hechos -- `lanzado` seguido (más adelante, no necesariamente a
     continuación: otras instancias emiten de por medio mientras corren en
     paralelo) de `fin_agente` con `estado_final: terminado` para la MISMA
-    instancia, y el fichero que ese paso debía dejar (`_ficheros_de_paso`)
-    existe todavía en disco ahora mismo.
+    instancia, y el fichero que ese paso debía dejar
+    (`_ficheros_prueba_hecho`) existe todavía en disco ahora mismo.
 
     Clave `(instancia, encargo)`, contando apariciones: la revisión del
     redactor repite el mismo encargo en cada vuelta (no lleva `VUELTA=n`),
@@ -163,7 +183,7 @@ def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tupl
             if abierto is None or ev.get("estado_final") != "terminado":
                 continue
             encargo, rol = abierto
-            ficheros = _ficheros_de_paso(rol, _parse_encargo(encargo))
+            ficheros = _ficheros_prueba_hecho(rol, _parse_encargo(encargo))
             if ficheros and not all((salida / f).exists() for f in ficheros):
                 continue
             clave = (ev["agente"], encargo)
