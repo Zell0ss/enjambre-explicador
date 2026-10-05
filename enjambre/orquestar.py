@@ -141,22 +141,45 @@ def _ficheros_de_paso(rol: str, campos: dict[str, str]) -> list[str]:
     return []
 
 
-def _ficheros_prueba_hecho(rol: str, campos: dict[str, str]) -> list[str]:
-    """D24: qué ficheros demuestran que una aparición anterior de este paso
-    ya está hecha (`_lanzamientos_hechos`, más abajo). Coincide con la
-    lista que borra D25 (`_ficheros_de_paso`) salvo para el BORRADOR del
-    redactor: D25 borra `articulo.md` Y `cambios.md` (por si acaso, antes
-    de relanzarlo de verdad), pero el borrador solo ESCRIBE `articulo.md`
-    -- `cambios.md` no existe hasta la primera revisión. Probar con la
-    lista de borrado completa hacía que el borrador NUNCA contara como
-    hecho (`cambios.md` nunca existe en ese momento) y se repitiera
-    siempre al continuar, aunque ya estuviera terminado y su fichero en
-    disco. Encontrado por Josem contra un run real
-    (Claude-Fables-20261004-220410): repitió un borrador de 0,46 $ al
-    continuar."""
+def _paso_esta_hecho(rol: str, campos: dict[str, str], salida: Path) -> bool:
+    """D24: ¿demuestra el disco que una aparición anterior de este paso ya
+    está hecha? (`_lanzamientos_hechos`, más abajo). Para la mayoría de
+    roles basta con que el fichero que D25 borraría (`_ficheros_de_paso`)
+    siga existiendo. Dos excepciones, las dos encontradas por Josem contra
+    runs reales:
+
+    1. El BORRADOR del redactor: D25 borra `articulo.md` Y `cambios.md`
+       (por si acaso, antes de relanzarlo de verdad), pero el borrador solo
+       ESCRIBE `articulo.md` -- `cambios.md` no existe hasta la primera
+       revisión. Probar con la lista de borrado completa hacía que el
+       borrador NUNCA contara como hecho y se repitiera siempre al
+       continuar (Claude-Fables-20261004-220410, un borrador de 0,46 $
+       repetido).
+    2. Verificador/novato: su fichero (`verificacion.md`/`dudas.md`) vive
+       en la RAÍZ de `salida`, y cada vuelta siguiente lo borra (D25) y lo
+       vuelve a escribir ahí mismo -- para una vuelta ya ARCHIVADA
+       (`vueltas/<n>/`, D13, que solo existe si verificador Y novato
+       tuvieron éxito los dos) esa copia es la prueba fiable siempre, pase
+       lo que pase después en la raíz; si todavía no se ha archivado (la
+       vuelta más reciente, cortada a medio terminar porque solo uno de
+       los dos acabó), el fichero de la raíz SÍ es fiable, porque nada
+       posterior lo ha tocado todavía. Mirar solo la raíz rompía las
+       vueltas YA archivadas en cuanto una vuelta posterior empezaba (y
+       D25 borraba su fichero para el intento nuevo): el mismo run real de
+       arriba, al interrumpirse a media vuelta 3 y continuar, repitió la
+       vuelta 1 entera -- ya archivada en `vueltas/1/`, pero su
+       `verificacion.md` de la raíz ya lo había borrado el intento de la
+       vuelta 3."""
     if rol == "redactor" and campos.get("MODO") != "revision":
-        return ["articulo.md"]
-    return _ficheros_de_paso(rol, campos)
+        return (salida / "articulo.md").exists()
+    if rol == "verificador" and "VUELTA" in campos:
+        n = campos["VUELTA"]
+        return (salida / "vueltas" / n / "verificacion.md").exists() or (salida / "verificacion.md").exists()
+    if rol == "novato" and "VUELTA" in campos:
+        n = campos["VUELTA"]
+        return (salida / "vueltas" / n / "dudas.md").exists() or (salida / "dudas.md").exists()
+    ficheros = _ficheros_de_paso(rol, campos)
+    return not ficheros or all((salida / f).exists() for f in ficheros)
 
 
 def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tuple[str, str], int]:
@@ -164,8 +187,8 @@ def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tupl
     hechos -- `lanzado` seguido (más adelante, no necesariamente a
     continuación: otras instancias emiten de por medio mientras corren en
     paralelo) de `fin_agente` con `estado_final: terminado` para la MISMA
-    instancia, y el fichero que ese paso debía dejar
-    (`_ficheros_prueba_hecho`) existe todavía en disco ahora mismo.
+    instancia, y el disco demuestra que ese paso está hecho
+    (`_paso_esta_hecho`).
 
     Clave `(instancia, encargo)`, contando apariciones: la revisión del
     redactor repite el mismo encargo en cada vuelta (no lleva `VUELTA=n`),
@@ -183,8 +206,7 @@ def _lanzamientos_hechos(eventos_previos: list[dict], salida: Path) -> dict[tupl
             if abierto is None or ev.get("estado_final") != "terminado":
                 continue
             encargo, rol = abierto
-            ficheros = _ficheros_prueba_hecho(rol, _parse_encargo(encargo))
-            if ficheros and not all((salida / f).exists() for f in ficheros):
+            if not _paso_esta_hecho(rol, _parse_encargo(encargo), salida):
                 continue
             clave = (ev["agente"], encargo)
             hechos[clave] = hechos.get(clave, 0) + 1

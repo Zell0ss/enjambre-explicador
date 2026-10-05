@@ -417,6 +417,33 @@ async def test_reanudar_no_repite_el_borrador_del_redactor(repo, tmp_path):
     assert lanzados(despues) == ["verificador", "novato"]
 
 
+async def test_reanudar_no_repite_vueltas_ya_archivadas_tras_cortarse_a_media_vuelta(repo, tmp_path):
+    """D24: encontrado por Josem en un run real (Claude-Fables-20261004-220410)
+    -- interrumpido a media vuelta 3 (novato terminó, verificador no) y
+    continuado, repitió la vuelta 1 entera, ya archivada en `vueltas/1/`.
+    `verificacion.md`/`dudas.md` de la RAÍZ no sirven para probar "hecho":
+    la vuelta 3 ya los había borrado (D25) para su propio intento antes de
+    que nada volviera a escribirlos."""
+
+    def verificador_falla_sin_escribir(agente, instancia, encargo, ctx):
+        # Mismo estado final que deja una interrupción real a medio
+        # terminar: sin fin_agente=terminado y sin volver a escribir
+        # verificacion.md (D25 ya lo había borrado para este intento).
+        return Resultado("error", coste_usd=0.01)
+
+    lanzar = hacer_lanzar_falso({
+        "verificador": [_verificacion_con_fallos, _verificacion_con_fallos, verificador_falla_sin_escribir],
+    })
+    fin1 = await orquestar(repo, tmp_path / "s", lanzar, run="r1", max_vueltas=2)
+    assert fin1["motivo"] == "fallo:verificador:error" and fin1["vueltas"] == 3
+
+    fin2 = await reanudar(tmp_path / "s" / "agora" / "r1", lanzar, max_vueltas=2)
+    assert fin2["motivo"] == "aprobado" and fin2["vueltas"] == 3
+    _, despues = _tras_reanudar(eventos(tmp_path / "s"))
+    assert lanzados(despues) == ["verificador"]  # ni vuelta 1 ni vuelta 2 se repiten; novato (ya hecho) tampoco
+    assert [e["n"] for e in despues if e["tipo"] == "vuelta"] == [3]  # ni "vuelta 1" se reemite
+
+
 # --- num_turns: de Resultado al evento fin_agente ---------------------------
 
 
