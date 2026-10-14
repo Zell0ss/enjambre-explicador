@@ -63,4 +63,20 @@ Propuesta del arquitecto (D35, pendiente de aprobación). El salto "sin cambios"
 (`saltar_si_igual`) se decide con **`salidas/`**: el último run acabado (`aprobado` o
 `tope_vueltas`) de esa fuente con ese commit. No se decide con la nota. Así, una nota que Josem ha
 sacado de `Clippings/` no hace que se relea y se pague otra vez el mismo commit. Y si Josem quiere
-releerlo igualmente, tiene "Lanzar ahora", que nunca salta. *(Resolución: pendiente.)*
+releerlo igualmente, tiene "Lanzar ahora", que nunca salta.
+
+**Resolución (2026-10-14): Josem aprueba. D35 vigente** (D30 queda revisada por D35). Lo que pide:
+
+1. `leer(..., saltar_si_igual=True)` mira `salidas/`, no la nota: busca el run más reciente de esa
+   `fuente` cuya última línea sea un `run_fin` con motivo en `FINALES`. Si su `run_inicio.commit` es el
+   commit de ahora, devuelve `motivo="sin_cambios"` sin lanzar nada. `nota` queda como la ruta
+   `raiz_notas/<nombre>.md` si existe, o `None`. `texto_run`/`texto_noche` ya lo cubren.
+2. La comprobación previa de R3 sigue igual: es otra cosa (nombre ocupado), no el salto.
+3. *Pruebas de regresión:* (a) run aprobado, se borra la nota y `leer(saltar_si_igual=True)` da
+   `sin_cambios` sin crear otro run; (b) run aprobado y después otro parado del mismo commit:
+   `sin_cambios`, porque cuenta el último *acabado*. La continuación de lo parado la decide la cola
+   con `ultimo_parado`, que va antes. (c) Commit nuevo: no salta.
+   La prueba normativa `test_saltar_si_la_nota_ya_tiene_ese_commit` sigue pasando tal cual.
+
+Con esto puedes hacer la Tarea 24 y cerrar H3. El `.env` ya existe (lo creó Josem). **La prueba
+[API] de H3 sigue necesitando el "sí" de Josem en tu ventana.**
