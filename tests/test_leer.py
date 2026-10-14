@@ -212,3 +212,36 @@ async def test_nota_ajena_no_afecta_a_falso(e):
     (e.notas / "proyecto.md").write_text("# Mis notas\n")
     l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", falso=True, **_kw(e))
     assert l.nota == l.salida / "nota.md"
+
+
+# --- D35: el salto se decide con salidas/, no con la nota ---
+
+async def test_d35_nota_borrada_no_hace_releer(e):
+    l1 = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", **_kw(e))
+    l1.nota.unlink()
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r2", saltar_si_igual=True, **_kw(e))
+    assert l.motivo == "sin_cambios" and l.coste_usd == 0 and l.nota is None
+    assert not (e.salidas / "proyecto" / "r2").exists()
+
+
+async def test_d35_cuenta_el_ultimo_acabado_no_el_ultimo_parado(e):
+    await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", **_kw(e))
+    parado = await leer(_f(e), lanzar=hacer_lanzar_falso(FALLA), run="r2", **_kw(e))
+    assert parado.motivo.startswith("fallo:")
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), reanudar=parado.salida, saltar_si_igual=True, **_kw(e))
+    assert l.motivo == "sin_cambios" and not l.continuado
+
+
+async def test_d35_commit_nuevo_no_salta(e):
+    await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", **_kw(e))
+    (e.notas / "proyecto.md").unlink()
+    repo_con_commit(e.repo, "b.py", "y = 2\n")
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r2", saltar_si_igual=True, **_kw(e))
+    assert l.motivo == "aprobado" and l.run == "r2"
+
+
+async def test_d35_un_run_falso_no_cuenta(e):
+    # Añadida: la demo `--falso` de una fuente no puede suprimir su lectura real.
+    await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", falso=True, **_kw(e))
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r2", saltar_si_igual=True, **_kw(e))
+    assert l.motivo == "aprobado" and l.run == "r2"

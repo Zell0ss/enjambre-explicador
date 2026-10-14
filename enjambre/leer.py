@@ -66,12 +66,16 @@ async def leer(
         comprobar(raiz_notas, f.nombre, f.texto)
     ruta, commit = actualizar(f, raiz_copias=raiz_copias, remoto=remoto)
 
+    # D35: el salto se decide con `salidas/` (el último run ACABADO de esta fuente
+    # y este commit), no con la nota: una nota que Josem sacó de Clippings/ no
+    # debe hacer que se pague otra vez el mismo commit.
     if saltar_si_igual and commit is not None:
-        previa = leer_frontmatter(raiz_notas / f"{f.nombre}.md")
-        if previa and previa.get("fuente") == f.texto and previa.get("commit") == commit:
+        acabado = _ultimo_acabado(salidas, f.texto)
+        if acabado is not None and acabado.get("commit") == commit:
+            nota = raiz_notas / f"{f.nombre}.md"
             return Lectura(fuente=f.texto, nombre=f.nombre, commit=commit, run=None, salida=None,
                            motivo="sin_cambios", vueltas=0, coste_usd=0.0,
-                           nota=raiz_notas / f"{f.nombre}.md")
+                           nota=nota if nota.exists() else None)
 
     if reanudar is not None:
         previos = _eventos(reanudar)
@@ -112,11 +116,9 @@ def _coste_previo(salida: Path) -> float:
     return ultimo.get("coste_previo_usd") or 0.0
 
 
-def ultimo_parado(salidas: Path, fuente: str) -> Path | None:
-    """El run más reciente de `fuente`, si terminó en un `run_fin` con un motivo
-    no final. Aprobado, `tope_vueltas`, sin `run_fin` (muerto o en marcha) o sin
-    runs: `None`."""
-    candidatos = []
+def _runs_de(salidas: Path, fuente: str) -> list[tuple[str, Path, dict, dict]]:
+    """`(t del run_inicio, carpeta, run_inicio, última línea)` de cada run de `fuente`."""
+    runs = []
     for ruta in salidas.glob("*/*/eventos.jsonl"):
         try:
             eventos = _eventos(ruta.parent)
@@ -124,10 +126,30 @@ def ultimo_parado(salidas: Path, fuente: str) -> Path | None:
         except (OSError, ValueError, StopIteration):
             continue  # un eventos.jsonl corrupto no tumba la búsqueda
         if inicio.get("fuente") == fuente:
-            candidatos.append((inicio.get("t", ""), ruta.parent, eventos[-1]))
+            runs.append((inicio.get("t", ""), ruta.parent, inicio, eventos[-1]))
+    return runs
+
+
+def _ultimo_acabado(salidas: Path, fuente: str) -> dict | None:
+    """El `run_inicio` del run más reciente de `fuente` que acabó (`FINALES`).
+    Los `--falso` no cuentan: una demo no puede hacer que se salte una lectura
+    real del mismo commit."""
+    acabados = [
+        r for r in _runs_de(salidas, fuente)
+        if r[3].get("tipo") == "run_fin" and r[3].get("motivo") in FINALES
+        and not (r[2].get("params") or {}).get("falso")
+    ]
+    return max(acabados, key=lambda r: r[0])[2] if acabados else None
+
+
+def ultimo_parado(salidas: Path, fuente: str) -> Path | None:
+    """El run más reciente de `fuente`, si terminó en un `run_fin` con un motivo
+    no final. Aprobado, `tope_vueltas`, sin `run_fin` (muerto o en marcha) o sin
+    runs: `None`."""
+    candidatos = _runs_de(salidas, fuente)
     if not candidatos:
         return None
-    _, salida, ultimo = max(candidatos, key=lambda c: c[0])
+    _, salida, _, ultimo = max(candidatos, key=lambda c: c[0])
     if ultimo.get("tipo") == "run_fin" and ultimo.get("motivo") not in FINALES:
         return salida
     return None
