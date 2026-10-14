@@ -595,3 +595,15 @@ def test_la_pantalla_no_importa_el_orquestador_ni_el_sdk():
     r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True,
                        cwd=Path(__file__).resolve().parent.parent)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_el_hijo_toma_el_mismo_cerrojo_que_mira_el_servidor(fase3):
+    # Si el hijo usara otro fichero (el de por defecto), D31 no protegería nada.
+    _post(fase3.base + "/api/lanzar", {"repo": "https://github.com/x/proyecto", **VALIDO})
+    args = fase3.vistos[-1]
+    assert args[args.index("--cerrojo") + 1] == str(fase3.cerrojo)
+    _post(fase3.base + "/api/parar")
+    _esperar_fin(fase3.base)
+    _run_parado(fase3.salidas, fase3.raiz / "agora")
+    _post(fase3.base + "/api/reanudar", {"repo": "agora", "run": "agora-1", "tope_usd": 2, "max_vueltas": 2})
+    assert fase3.vistos[-1][fase3.vistos[-1].index("--cerrojo") + 1] == str(fase3.cerrojo)

@@ -337,6 +337,10 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                 str(max_vueltas),
                 "--run",
                 run,
+                # El mismo fichero que el servidor mira con `ocupado`: si el
+                # hijo tomara otro (por defecto), D31 no cubriría nada.
+                "--cerrojo",
+                str(self.server.cerrojo),  # type: ignore[attr-defined]
             ]
             if falso:
                 args.append("--falso")
@@ -430,6 +434,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                 str(tope_usd),
                 "--max-vueltas",
                 str(max_vueltas),
+                "--cerrojo",
+                str(self.server.cerrojo),  # type: ignore[attr-defined]
             ]
             if params_previos["falso"]:
                 args.append("--falso")

@@ -29,11 +29,16 @@ La pantalla sirve una lista de runs en `/`; cada uno con un enlace a su
 repetición (reproduce `eventos.jsonl` entero, con barra y velocidad) y,
 mientras sigue en marcha, otro a verlo en directo (SSE, en vivo, sin barra).
 
-La propia portada tiene un formulario para lanzar un run nuevo (repo, tope
-en $, vueltas, casilla "falso (sin gastar)") sin tocar la terminal: lanza un
-subproceso `python -m enjambre.orquestar` aparte y salta a verlo en directo,
-con un botón Parar mientras sigue en marcha. El repo tiene que estar bajo
-`/data` (ver `enjambre/pantalla.py`, `crear_servidor(..., raiz_repos=...)`).
+La propia portada tiene un formulario para lanzar un run (D21, D33): un campo
+"URL de GitHub o ruta bajo /data", tope en $, vueltas y la casilla "falso (sin
+gastar)", con dos botones. **Lanzar ahora** lanza un subproceso
+`python -m enjambre.leer <fuente>` aparte (actualiza la copia, orquesta, deja la
+nota y avisa) y salta a verlo en directo, con un botón Parar mientras sigue en
+marcha; la página espera a que acabe el clon y, si el proceso muere antes de crear
+el run (repo privado o inexistente, copia ajena), enseña el error. **Encolar para
+esta noche** solo apunta la fuente en la cola (`/api/encolar`); debajo, el bloque
+"Esta noche" enseña lo pendiente y lo rendido (`/api/cola`). Si hay otro run en
+marcha en la máquina (la cola, una terminal) contesta 409 (D31).
 
 Un run en marcha (directo o repetición) se ve como **la mesa de papeles**
 (D22): una rejilla de tarjetas HTML en el orden del flujo (cartógrafo,
