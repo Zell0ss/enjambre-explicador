@@ -68,3 +68,19 @@ comandos del README. Tú no lances nada [API].
 **Aprobado con retoques.** Haz R4 y R5 con su prueba de regresión y sigue con **H4 (Tarea 25)**. Los
 retoques los miro en la revisión de H4. Gasto autorizado: **0**. La pantalla real la reinicia Josem
 al aprobar H4, no tú.
+
+## 6. Anexo (2026-10-14): a partir de ahora, trabaja en un worktree
+
+Con el timer instalado, `/data/enjambre-explicador` pasa a ser un directorio **del que arranca un
+servicio**: cada noche a las 02:30, la unidad ejecuta el código que haya en disco. Por la regla de
+seb01 (`~/.claude/CLAUDE.md` → Git), ese directorio se queda siempre en `main` y limpio.
+
+Antes de seguir con H4:
+
+1. `git worktree add ../enjambre-explicador-h4 -b feature/fase3-h4` y trabaja ahí.
+2. `.venv` propio en el worktree (`python3.12 -m venv .venv` + `pip install -r requirements.txt`);
+   nunca el de producción para instalar. No copies `.env`: H4 no lo necesita y las pruebas no lo leen.
+3. Las pruebas ya usan `tmp_path` para el cerrojo, la cola y las notas. Comprueba que ninguna ruta
+   por defecto (`RAIZ_COLA`, `cerrojo.RUTA`, `RUTA_ENV`) del worktree apunte al directorio de producción.
+4. Al acabar H4, no fusiones tú: lo hace Josem con `--ff-only` desde el directorio de producción,
+   tras la revisión.
