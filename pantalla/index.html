@@ -539,7 +539,8 @@
     white-space: nowrap;
   }
   .form-lanzar input[type="text"] {
-    width: 220px;
+    width: 340px;
+    max-width: 100%;
   }
   .form-lanzar input[type="number"] {
     width: 64px;
@@ -565,6 +566,37 @@
     width: 100%;
     color: #ff6b6b;
   }
+  /* D33: "Esta noche" -- la cola de la portada. */
+  .cola-noche {
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #1a2230;
+    border: 1px solid #333c4a;
+    border-radius: 4px;
+  }
+  .cola-noche h2 {
+    margin: 0 0 6px;
+    font-size: 1em;
+    text-transform: uppercase;
+    color: #9fb4cc;
+  }
+  .cola-noche ul {
+    margin: 0 0 6px;
+    padding-left: 18px;
+  }
+  .cola-noche .vacia {
+    color: #7d8a9a;
+  }
+  .cola-noche .detalle {
+    color: #9fb4cc;
+  }
+  .cola-noche .fallida {
+    color: #ff9ecb;
+  }
+  .form-lanzar .ok-encolar {
+    width: 100%;
+    color: #8fd18f;
+  }
   #btn-parar {
     background: #3a1e1e;
     color: #ff9ecb;
@@ -584,13 +616,21 @@
        (`_instalarFormularioLanzar`). "falso" empieza marcado a propósito
        (gastar de verdad es la excepción, no el default). -->
   <form id="form-lanzar" class="form-lanzar">
-    <label>repo <input id="f-repo" type="text" value="/data/agora" /></label>
+    <label>repo <input id="f-repo" type="text" placeholder="URL de GitHub o ruta bajo /data" /></label>
     <label>tope $ <input id="f-tope" type="number" value="5" min="0" max="10" step="0.5" /></label>
     <label>vueltas <input id="f-vueltas" type="number" value="2" min="0" max="3" /></label>
     <label><input id="f-falso" type="checkbox" checked /> falso (sin gastar)</label>
-    <button id="btn-lanzar" type="submit">Lanzar</button>
+    <button id="btn-lanzar" type="submit">Lanzar ahora</button>
+    <button id="btn-encolar" type="button">Encolar para esta noche</button>
     <span id="error-lanzar" class="error-lanzar"></span>
+    <span id="ok-encolar" class="ok-encolar"></span>
   </form>
+
+  <!-- D33: la cola de la noche (D29). La rellena mesa.js (`_cargarCola`). -->
+  <section id="cola-noche" class="cola-noche">
+    <h2>Esta noche</h2>
+    <div id="cola-contenido">cargando…</div>
+  </section>
 
   <div id="lista-runs" class="lista-runs"></div>
 

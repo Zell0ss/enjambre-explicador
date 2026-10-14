@@ -22,7 +22,8 @@
 // este módulo busca por id en `document` los controles de repetición
 // (#controles, #btn-pausa, botones [data-vel], #barra), el aviso del modo
 // directo (#aviso-directo), el botón Parar (#btn-parar), la lista de runs
-// (#lista-runs), el formulario de lanzar (#form-lanzar y sus campos), la
+// (#lista-runs), el formulario de lanzar (#form-lanzar y sus campos), la cola
+// de la noche (#cola-noche, #cola-contenido), la
 // zona de la mesa (#zona-mesa), el contenedor de flechas (#flechas), el
 // panel "Ahora" (#lista-ahora), la bitácora (#lista-bitacora), las puertas
 // (#puertas) y el panel lateral (#panel-lateral, #panel-contenido,
@@ -133,14 +134,17 @@ export async function arrancar(mesaEl, cabecera) {
   const zonaMesa = document.getElementById("zona-mesa");
   const listaRuns = document.getElementById("lista-runs");
   const formLanzar = document.getElementById("form-lanzar");
+  const colaNoche = document.getElementById("cola-noche");
 
   if (!run) {
     if (zonaMesa) zonaMesa.hidden = true;
     if (listaRuns) listaRuns.hidden = false;
     if (formLanzar) formLanzar.hidden = false;
+    if (colaNoche) colaNoche.hidden = false;
     if (_cab.volver) _cab.volver.hidden = true;
     _cargarListaRuns(listaRuns);
     _instalarFormularioLanzar(formLanzar);
+    _cargarCola();
     // Nada que pintar todavía: se deja la mesa en su estado inicial para que
     // no quede nada sin inicializar si alguien navega hacia atrás desde una
     // repetición.
@@ -151,6 +155,7 @@ export async function arrancar(mesaEl, cabecera) {
   if (zonaMesa) zonaMesa.hidden = false;
   if (listaRuns) listaRuns.hidden = true;
   if (formLanzar) formLanzar.hidden = true;
+  if (colaNoche) colaNoche.hidden = true;
   // Botón para volver a la portada (lista de runs / formulario de lanzar)
   // sin tocar la barra de direcciones -- `href="?"` quita `run`/`modo` sin
   // tocar el resto de la URL (no hay otros parámetros que conservar).
@@ -906,8 +911,40 @@ async function _instalarFormularioLanzar(form) {
     // Un fallo aquí no debe bloquear el formulario entero.
   }
 
+  const btnEncolar = document.getElementById("btn-encolar");
+  const ok = document.getElementById("ok-encolar");
+  if (btnEncolar) {
+    btnEncolar.onclick = async () => {
+      if (error) error.textContent = "";
+      if (ok) ok.textContent = "";
+      btnEncolar.disabled = true;
+      const repo = (document.getElementById("f-repo") || {}).value?.trim() || "";
+      try {
+        // D33: encolar no lanza nada ni toca `git`: solo apunta la fuente.
+        // El tope y "falso" no cuentan aquí, los pone la noche (D30).
+        const resp = await fetch("/api/encolar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+          body: JSON.stringify({ repo }),
+        });
+        const cuerpo = await resp.json().catch(() => ({}));
+        if (resp.status === 201 || resp.status === 200) {
+          if (ok) ok.textContent = cuerpo.nuevo ? `${cuerpo.nombre} encolado para esta noche` : `${cuerpo.nombre} ya estaba en la cola`;
+          _cargarCola();
+        } else if (error) {
+          error.textContent = cuerpo.error || `error ${resp.status} al encolar`;
+        }
+      } catch (err) {
+        if (error) error.textContent = `no se pudo contactar con el servidor: ${err}`;
+      } finally {
+        btnEncolar.disabled = false;
+      }
+    };
+  }
+
   form.onsubmit = async (evt) => {
     evt.preventDefault();
+    if (ok) ok.textContent = "";
     if (error) error.textContent = "";
     if (btn) btn.disabled = true;
 
@@ -934,6 +971,63 @@ async function _instalarFormularioLanzar(form) {
       if (btn) btn.disabled = false;
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// "Esta noche" (D29, D33): lo pendiente de la cola y lo que se rindió.
+// ---------------------------------------------------------------------------
+
+function _ultimoMotivo(peticion) {
+  const h = Array.isArray(peticion.historial) ? peticion.historial : [];
+  const ultimo = h[h.length - 1];
+  return ultimo ? ultimo.error || ultimo.motivo || "" : "";
+}
+
+async function _cargarCola() {
+  const contenedor = document.getElementById("cola-contenido");
+  if (!contenedor) return;
+  let cola;
+  try {
+    cola = await (await fetch("/api/cola")).json();
+  } catch (err) {
+    contenedor.textContent = `no se pudo cargar /api/cola: ${err}`;
+    return;
+  }
+  contenedor.innerHTML = "";
+  const pendientes = Array.isArray(cola.pendientes) ? cola.pendientes : [];
+  const fallidas = Array.isArray(cola.fallidas) ? cola.fallidas : [];
+
+  const lista = (items, clase) => {
+    const ul = document.createElement("ul");
+    for (const p of items) {
+      const li = document.createElement("li");
+      if (clase) li.className = clase;
+      li.append(`${p.nombre} `);
+      const detalle = document.createElement("span");
+      detalle.className = "detalle";
+      const partes = [`encolado ${(p.encolado || "?").replace("T", " ")}`, `${p.intentos || 0} intento(s)`];
+      const motivo = _ultimoMotivo(p);
+      if (motivo) partes.push(`último: ${motivo}`);
+      detalle.textContent = `— ${partes.join(" · ")}`;
+      li.appendChild(detalle);
+      ul.appendChild(li);
+    }
+    return ul;
+  };
+
+  if (pendientes.length === 0) {
+    const vacia = document.createElement("div");
+    vacia.className = "vacia";
+    vacia.textContent = "nada en la cola.";
+    contenedor.appendChild(vacia);
+  } else {
+    contenedor.appendChild(lista(pendientes, ""));
+  }
+  if (fallidas.length > 0) {
+    const titulo = document.createElement("div");
+    titulo.textContent = "Rendidas tras 3 noches:";
+    contenedor.append(titulo, lista(fallidas, "fallida"));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,8 +1242,30 @@ function _arrancarDirecto(repo, run) {
   let vistoRunFinSinContinuar = false;
   const url = `/api/directo/${encodeURIComponent(repo)}/${encodeURIComponent(run)}`;
   const es = new EventSource(url);
+  let recibioAlgo = false;
+
+  // D33: con una URL el proceso puede morir antes de crear el run (repo
+  // privado o inexistente, copia ajena, cerrojo ocupado). El servidor ya no
+  // espera a un run así y el directo da 404: se pregunta al lanzador por qué.
+  const explicarMuerte = async () => {
+    try {
+      const estado = await (await fetch("/api/lanzador")).json();
+      if (!estado.en_marcha && estado.error !== undefined && estado.run === run) {
+        clearInterval(tickId);
+        es.close();
+        if (btnParar) btnParar.hidden = true;
+        _actualizarCabecera("no se pudo leer");
+        mostrarAviso(`no se pudo leer ${estado.repo}: ${estado.error || "sin mensaje"} (código ${estado.codigo})`);
+        return true;
+      }
+    } catch {
+      // sin respuesta: se queda con el aviso genérico de reconexión.
+    }
+    return false;
+  };
 
   es.onmessage = (ev) => {
+    recibioAlgo = true;
     let evento;
     try {
       evento = JSON.parse(ev.data);
@@ -1191,6 +1307,13 @@ function _arrancarDirecto(repo, run) {
       // periódico, que ya no tiene nada nuevo que mostrar.
       clearInterval(tickId);
       es.close();
+      return;
+    }
+    if (!recibioAlgo) {
+      explicarMuerte().then((explicado) => {
+        if (explicado) return;
+        mostrarAviso("conexión perdida, reintentando…");
+      });
       return;
     }
     mostrarAviso("conexión perdida, reintentando…");
