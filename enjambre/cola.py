@@ -19,14 +19,19 @@ from datetime import datetime
 from pathlib import Path
 
 from enjambre import aviso, cerrojo
-from enjambre.fuente import resolver
-from enjambre.nota import FINALES
+from enjambre.fuente import CopiaAjena, FuenteInvalida, GitFallo, resolver
+from enjambre.nota import FINALES, NotaAjena
 from enjambre.registro import obtener_log
 
 # parent = enjambre/, parent.parent = raíz del repo.
 RAIZ_COLA = Path(__file__).resolve().parent.parent / "cola"
 
 _HECHOS = FINALES | {"sin_cambios"}
+
+# Lo único que es "un problema de ese repo": la noche sigue con el siguiente.
+# Cualquier otra excepción (SDK roto, disco lleno...) no es del repo, y seguir
+# solo gastaría un intento de cada petición (R5 de la revisión de H3).
+_DEL_REPO = (FuenteInvalida, CopiaAjena, GitFallo, NotaAjena)
 
 
 def _escribir(ruta: Path, datos: dict) -> None:
@@ -104,10 +109,13 @@ async def noche(
         hecha = False
         try:
             l = await leer_fn(pet["fuente"], min(tope_run_usd, disponible))
-        except Exception as e:  # noqa: BLE001 -- un problema de ESTE repo (privado, copia o nota ajena)
+        except Exception as e:  # noqa: BLE001
             error = f"{type(e).__name__}: {e}"
             errores.append((pet["fuente"], error))
             intento.update(error=error, coste_usd=0.0, run=None)
+            if not isinstance(e, _DEL_REPO):
+                parada = f"excepcion:{type(e).__name__}"
+                obtener_log().exception(f"cola: excepción no prevista leyendo {pet['fuente']}")
         else:
             # Foco 4: `l.coste_usd` es lo de esta lectura, no lo de la continuación entera.
             gastado += l.coste_usd
@@ -143,18 +151,16 @@ def _crear_analizador() -> argparse.ArgumentParser:
 
 
 def _hacer_leer_fn(salidas: Path, falso: bool):
-    from enjambre.leer import _falso_del_run, _elegir_lanzar, leer, ultimo_parado
+    from enjambre.leer import _elegir_lanzar, leer, ultimo_parado
 
     lanzar = _elegir_lanzar(falso)
 
     async def leer_fn(fuente_texto: str, tope_usd: float):
         f = resolver(fuente_texto)
-        parado = ultimo_parado(salidas, f.texto)
         # Un run real no se continúa con el `lanzar` falso (ni al revés): el
-        # modo lo fija el run (D24), y mezclarlos escribiría ficheros de pega en
-        # uno real o gastaría para seguir una demo.
-        if parado is not None and bool(_falso_del_run(parado)) != falso:
-            parado = None
+        # modo lo fija el run (D24). Se filtra al buscar, no después, para que
+        # una demo posterior no tape un run real parado (R4).
+        parado = ultimo_parado(salidas, f.texto, falso=falso)
         return await leer(f, salidas=salidas, lanzar=lanzar, tope_usd=tope_usd, max_vueltas=None,
                           falso=falso, reanudar=parado, saltar_si_igual=True)
 

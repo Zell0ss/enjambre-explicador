@@ -245,3 +245,16 @@ async def test_d35_un_run_falso_no_cuenta(e):
     await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", falso=True, **_kw(e))
     l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r2", saltar_si_igual=True, **_kw(e))
     assert l.motivo == "aprobado" and l.run == "r2"
+
+
+def test_ultimo_parado_filtra_por_modo(tmp_path):
+    # R4 de la revisión de H3: una demo --falso posterior no tapa un run real parado.
+    s = tmp_path / "s"
+    real = _run(s, "p", "p-1", F1, "2026-10-15T02:30:00", "tope_coste")
+    demo = _run(s, "p", "p-2", F1, "2026-10-15T10:00:00", "aprobado")
+    for d in (real, demo):
+        lineas = [json.loads(l) for l in (d / "eventos.jsonl").read_text().splitlines()]
+        lineas[0]["params"] = {"falso": d is demo}
+        (d / "eventos.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lineas))
+    assert ultimo_parado(s, F1, falso=False) == real
+    assert ultimo_parado(s, F1, falso=True) is None  # la demo acabó: nada que continuar

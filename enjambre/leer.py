@@ -142,11 +142,14 @@ def _ultimo_acabado(salidas: Path, fuente: str) -> dict | None:
     return max(acabados, key=lambda r: r[0])[2] if acabados else None
 
 
-def ultimo_parado(salidas: Path, fuente: str) -> Path | None:
-    """El run más reciente de `fuente`, si terminó en un `run_fin` con un motivo
-    no final. Aprobado, `tope_vueltas`, sin `run_fin` (muerto o en marcha) o sin
-    runs: `None`."""
-    candidatos = _runs_de(salidas, fuente)
+def ultimo_parado(salidas: Path, fuente: str, *, falso: bool = False) -> Path | None:
+    """El run más reciente de `fuente` **del modo `falso`**, si terminó en un
+    `run_fin` con un motivo no final. Aprobado, `tope_vueltas`, sin `run_fin`
+    (muerto o en marcha) o sin runs: `None`.
+
+    El modo se filtra aquí y no después (R4 de la revisión de H3): una demo
+    `--falso` posterior no debe tapar un run real parado, ni al revés."""
+    candidatos = [r for r in _runs_de(salidas, fuente) if bool((r[2].get("params") or {}).get("falso")) == falso]
     if not candidatos:
         return None
     _, salida, _, ultimo = max(candidatos, key=lambda c: c[0])

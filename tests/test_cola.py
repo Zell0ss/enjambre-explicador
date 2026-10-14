@@ -157,3 +157,15 @@ def test_main_falso_de_punta_a_punta(tmp_path, monkeypatch, capsys):
     assert pendientes(raiz) == [] and len(list((raiz / "hechas").iterdir())) == 1
     [nota] = list((tmp_path / "salidas" / "proyecto").glob("*/nota.md"))
     assert nota.exists()
+
+
+async def test_excepcion_desconocida_para_la_noche(tmp_path):
+    # R5 de la revisión de H3: no es un problema del repo, así que seguir solo gastaría intentos.
+    _encola(tmp_path, A, B)
+    llamadas = []
+    r = await noche(raiz_cola=tmp_path, leer_fn=_leer_fn({A: RuntimeError("SDK roto"), B: ("aprobado", 1.0)}, llamadas))
+    assert [f for f, _ in llamadas] == [A]
+    assert r["parada"] == "excepcion:RuntimeError" and r["errores"][0][0] == A
+    [a, b] = pendientes(tmp_path)
+    assert a["fuente"] == A and a["intentos"] == 1 and a["historial"][0]["error"].startswith("RuntimeError")
+    assert b["fuente"] == B and b["intentos"] == 0
