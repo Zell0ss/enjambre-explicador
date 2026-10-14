@@ -74,8 +74,9 @@ releerlo igualmente, tiene "Lanzar ahora", que nunca salta.
 2. La comprobación previa de R3 sigue igual: es otra cosa (nombre ocupado), no el salto.
 3. *Pruebas de regresión:* (a) run aprobado, se borra la nota y `leer(saltar_si_igual=True)` da
    `sin_cambios` sin crear otro run; (b) run aprobado y después otro parado del mismo commit:
-   `sin_cambios`, porque cuenta el último *acabado*. La continuación de lo parado la decide la cola
-   con `ultimo_parado`, que va antes. (c) Commit nuevo: no salta.
+   `sin_cambios`, porque cuenta el último *acabado*. Aunque la cola pase ese run parado en
+   `reanudar`, dentro de `leer` el salto va primero y gana: ese commit ya tiene artículo, no hace
+   falta acabar otro. (c) Commit nuevo: no salta.
    La prueba normativa `test_saltar_si_la_nota_ya_tiene_ese_commit` sigue pasando tal cual.
 
 Con esto puedes hacer la Tarea 24 y cerrar H3. El `.env` ya existe (lo creó Josem). **La prueba
