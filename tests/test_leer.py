@@ -188,3 +188,27 @@ async def test_main_reanudar_run_sin_fuente_sigue_como_antes(e, capsys):
         main, ["--reanudar", str(salida), "--cerrojo", str(e.data.parent / "c.lock")])
     assert codigo == 0 and not e.notas.exists()
     assert not (salida / "nota.md").exists()
+
+
+async def test_nota_ajena_se_descubre_antes_de_gastar(e):
+    # R3 de la revisión de H2: ni `lanzar` ni `salidas/<repo>/` si la nota no es nuestra.
+    from enjambre.nota import NotaAjena
+    e.notas.mkdir()
+    (e.notas / "proyecto.md").write_text("# Mis notas\n")
+    llamadas = []
+
+    async def lanzar(*a, **k):
+        llamadas.append(a)
+        raise AssertionError("no debía lanzarse nada")
+
+    with pytest.raises(NotaAjena):
+        await leer(_f(e), lanzar=lanzar, run="r1", **_kw(e))
+    assert llamadas == [] and not (e.salidas / "proyecto").exists()
+    assert (e.notas / "proyecto.md").read_text() == "# Mis notas\n"
+
+
+async def test_nota_ajena_no_afecta_a_falso(e):
+    e.notas.mkdir()
+    (e.notas / "proyecto.md").write_text("# Mis notas\n")
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", falso=True, **_kw(e))
+    assert l.nota == l.salida / "nota.md"

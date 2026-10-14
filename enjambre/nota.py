@@ -55,6 +55,20 @@ def leer_frontmatter(ruta: Path) -> dict | None:
     return None  # sin cierre
 
 
+def comprobar(raiz: Path, nombre: str, fuente: str, fichero: str | None = None) -> None:
+    """Lanza `NotaAjena` si el destino ya existe y no es una nota de `fuente`.
+    `leer` lo llama ANTES de gastar nada: un choque de nombres se sabe desde el
+    principio, y descubrirlo al escribir costaba el run entero."""
+    nombre_fichero = fichero or f"{nombre}.md"
+    if Path(nombre_fichero).name != nombre_fichero or nombre_fichero.startswith("."):
+        raise ValueError(f"nombre de nota no válido: {nombre_fichero!r}")
+    destino = raiz / nombre_fichero
+    if destino.exists():
+        previa = leer_frontmatter(destino)
+        if previa is None or previa.get("generado_por") != "enjambre" or previa.get("fuente") != fuente:
+            raise NotaAjena(f"{destino} ya existe y no es una nota de {fuente}")
+
+
 def escribir(
     raiz: Path,
     *,
@@ -78,14 +92,10 @@ def escribir(
     if motivo not in FINALES:
         raise ValueError(f"un run con motivo {motivo!r} no deja nota (D28)")
     nombre_fichero = fichero or f"{nombre}.md"
-    if Path(nombre_fichero).name != nombre_fichero or nombre_fichero.startswith("."):
-        raise ValueError(f"nombre de nota no válido: {nombre_fichero!r}")
-
+    # Se vuelve a comprobar aunque `leer` ya lo hizo: alguien pudo crear la nota
+    # a mano mientras corría el run.
+    comprobar(raiz, nombre, fuente, fichero)
     destino = raiz / nombre_fichero
-    if destino.exists():
-        previa = leer_frontmatter(destino)
-        if previa is None or previa.get("generado_por") != "enjambre" or previa.get("fuente") != fuente:
-            raise NotaAjena(f"{destino} ya existe y no es una nota de {fuente}")
 
     valores = {
         "fuente": fuente,

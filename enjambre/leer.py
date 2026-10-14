@@ -20,7 +20,7 @@ from pathlib import Path
 
 from enjambre import aviso, cerrojo
 from enjambre.fuente import RAIZ_COPIAS, CopiaAjena, Fuente, FuenteInvalida, GitFallo, actualizar, resolver
-from enjambre.nota import FINALES, RAIZ_NOTAS, NotaAjena, escribir, leer_frontmatter
+from enjambre.nota import FINALES, RAIZ_NOTAS, NotaAjena, comprobar, escribir, leer_frontmatter
 from enjambre.orquestar import orquestar, reanudar
 from enjambre.tipos import Lanzar, Lectura
 
@@ -60,6 +60,10 @@ async def leer(
 ) -> Lectura:
     """`max_vueltas=None` solo tiene sentido al continuar: hereda el del run
     parado (D24); en un run nuevo vale 2."""
+    # R3 (revisión de H2): un choque de nombre con una nota ajena se sabe ya, y
+    # no hay que pagar un run entero para descubrirlo. Con `falso` la nota no va al vault.
+    if not falso:
+        comprobar(raiz_notas, f.nombre, f.texto)
     ruta, commit = actualizar(f, raiz_copias=raiz_copias, remoto=remoto)
 
     if saltar_si_igual and commit is not None:
