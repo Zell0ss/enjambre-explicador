@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from enjambre import cerrojo
 from enjambre.agentes import ROLES, Agente, cargar
 from enjambre.eventos import Eventos
 from enjambre.parsers import SalidaIlegible, fallos, ids_de_piezas, veredicto
@@ -681,6 +682,9 @@ def _crear_analizador() -> argparse.ArgumentParser:
     # la exclusión depende de cuál de los dos modos se use, no de un grupo
     # fijo de argparse.
     analizador.add_argument("--reanudar", type=Path, default=None)
+    # D31: un run a la vez en la máquina. Parámetro para que las pruebas no
+    # toquen el cerrojo real.
+    analizador.add_argument("--cerrojo", type=Path, default=cerrojo.RUTA)
     return analizador
 
 
@@ -705,6 +709,17 @@ def main(argv: list[str] | None = None) -> int:
     parado (D24)."""
     args = _crear_analizador().parse_args(argv)
 
+    # D31: el cerrojo cubre el run entero (también --reanudar) y lo toma quien
+    # ejecuta, no `orquestar()`/`reanudar()`: así las pruebas de esas no cambian.
+    try:
+        with cerrojo.tomar(args.cerrojo):
+            return _main_con_cerrojo(args)
+    except cerrojo.Ocupado:
+        print("hay otro run en marcha", file=sys.stderr)
+        return 3
+
+
+def _main_con_cerrojo(args: argparse.Namespace) -> int:
     if args.reanudar is not None:
         if args.repo is not None or args.run is not None:
             print("--reanudar excluye --repo y --run", file=sys.stderr)
