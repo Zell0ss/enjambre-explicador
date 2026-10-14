@@ -1,0 +1,12 @@
+[Unit]
+Description=enjambre-explicador: la cola de la noche (D30)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Environment=HOME=/home/ubuntu
+WorkingDirectory=/data/enjambre-explicador
+ExecStart=/data/enjambre-explicador/.venv/bin/python -m enjambre.cola
+TimeoutStartSec=5h
