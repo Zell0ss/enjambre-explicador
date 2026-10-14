@@ -72,7 +72,9 @@ def encolar(
     `FuenteInvalida` (sin tocar `git` ni la red: `resolver` es pura)."""
     f = resolver(texto, **resolver_kw)
     for ruta, pet in _listar(raiz_cola / "pendientes"):
-        if pet.get("fuente") == f.texto:
+        # Sin distinguir mayúsculas: GitHub tampoco las distingue, y `.../Repo`
+        # y `.../repo` son el mismo repo (dos copias en disco y dos notas).
+        if str(pet.get("fuente", "")).lower() == f.texto.lower():
             return ruta, False
     base = f"{ahora():%Y%m%d-%H%M%S}-{f.nombre}"
     ruta = raiz_cola / "pendientes" / f"{base}.json"

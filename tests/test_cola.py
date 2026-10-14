@@ -169,3 +169,10 @@ async def test_excepcion_desconocida_para_la_noche(tmp_path):
     [a, b] = pendientes(tmp_path)
     assert a["fuente"] == A and a["intentos"] == 1 and a["historial"][0]["error"].startswith("RuntimeError")
     assert b["fuente"] == B and b["intentos"] == 0
+
+
+def test_encolar_no_distingue_mayusculas(tmp_path):
+    # Hallado en la prueba manual de H4: `.../Claude-Fables` y `.../claude-fables` son el mismo repo.
+    p1, nuevo1 = encolar("https://github.com/x/Proyecto", raiz_cola=tmp_path)
+    p2, nuevo2 = encolar("https://github.com/X/proyecto", raiz_cola=tmp_path)
+    assert nuevo1 and not nuevo2 and p1 == p2
