@@ -20,7 +20,10 @@ class Ocupado(RuntimeError): ...
 
 
 @contextmanager
-def tomar(ruta: Path = RUTA):
+def tomar(ruta: Path | None = None):
+    # `None` y no `= RUTA`: un valor por defecto se fija al definir la función
+    # y las pruebas no podrían redirigirlo.
+    ruta = ruta or RUTA
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with open(ruta, "a") as f:
         try:
@@ -32,7 +35,7 @@ def tomar(ruta: Path = RUTA):
         yield
 
 
-def ocupado(ruta: Path = RUTA) -> bool:
+def ocupado(ruta: Path | None = None) -> bool:
     """Prueba a tomarlo y lo suelta."""
     try:
         with tomar(ruta):

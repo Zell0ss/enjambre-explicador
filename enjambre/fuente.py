@@ -153,7 +153,11 @@ def _git(args: list[str], cwd: Path | None, timeout_s: float) -> str:
 
 
 def _canonico(url: str) -> str:
-    return url.strip().rstrip("/").removesuffix(".git")
+    # Solo para comparar orígenes: GitHub no distingue mayúsculas ni en el dueño
+    # ni en el repo, y una copia clonada a mano puede traer el `origin` tal
+    # cual se escribió. La forma canónica de `Fuente` y el nombre del
+    # directorio sí conservan las mayúsculas del repo.
+    return url.strip().rstrip("/").removesuffix(".git").lower()
 
 
 def _commit(ruta: Path, timeout_s: float) -> str:

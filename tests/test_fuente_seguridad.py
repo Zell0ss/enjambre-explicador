@@ -103,3 +103,14 @@ def test_timeout_falla_sin_restos(remoto, tmp_path):
     with pytest.raises(GitFallo, match="tardó"):
         actualizar(F, raiz_copias=copias, remoto=f"file://{bare}", timeout_s=0.0001)
     assert not (copias / "proyecto").exists()
+
+
+def test_origin_con_mayusculas_no_es_copia_ajena(remoto, tmp_path):
+    # R1 de la revisión de H1: la comparación de `origin` no distingue mayúsculas.
+    trabajo, _ = remoto
+    bare = tmp_path / "Remoto.git"
+    git("clone", "--bare", str(trabajo), str(bare))
+    copias = tmp_path / "copias"
+    actualizar(F, raiz_copias=copias, remoto=f"file://{bare}")
+    ruta, commit = actualizar(F, raiz_copias=copias, remoto=f"file://{tmp_path}/REMOTO.git")
+    assert commit == rev(trabajo)
