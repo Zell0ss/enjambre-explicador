@@ -496,3 +496,16 @@ async def test_guion_con_entrada_asincrona(repo, tmp_path):
     lanzar = hacer_lanzar_falso({"verificador": [_verificador_async]})
     fin = await orquestar(repo, tmp_path / "s", lanzar, run="r1")
     assert fin["motivo"] == "aprobado" and fin["vueltas"] == 1
+
+
+async def test_run_inicio_lleva_fuente_y_commit(repo, tmp_path):
+    await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1",
+                    fuente="https://github.com/x/agora", commit="abc123")
+    ri = eventos(tmp_path / "s")[0]
+    assert ri["tipo"] == "run_inicio" and ri["fuente"] == "https://github.com/x/agora" and ri["commit"] == "abc123"
+
+
+async def test_run_inicio_sin_fuente(repo, tmp_path):
+    await orquestar(repo, tmp_path / "s", hacer_lanzar_falso(), run="r1")
+    ri = eventos(tmp_path / "s")[0]
+    assert ri["fuente"] is None and ri["commit"] is None

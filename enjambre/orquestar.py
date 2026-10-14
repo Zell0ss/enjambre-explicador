@@ -501,8 +501,14 @@ async def orquestar(
     max_turns: int = 60,
     run: str | None = None,
     falso: bool = False,
+    fuente: str | None = None,
+    commit: str | None = None,
 ) -> dict:
     """Lanza el enjambre sobre `repo` y devuelve el evento `run_fin`.
+
+    Fase 3: `fuente` y `commit` (de dónde salió el repo y qué versión se lee)
+    van al nivel superior de `run_inicio`, siempre presentes y quizá `None`:
+    es un campo añadido, que la regla de compatibilidad de §4 permite.
 
     D24: `falso` no decide qué `lanzar` se usa -- eso lo sigue eligiendo
     quien llama (`main`), igual que antes -- solo se anota en
@@ -535,6 +541,8 @@ async def orquestar(
             salida=str(salida),
             params=params,
             roles={rol: a.modelo for rol, a in agentes.items()},
+            fuente=fuente,
+            commit=commit,
         )
         for rol in ("cartografo", "despiezador", "trazador", "redactor", "verificador", "novato"):
             eventos.emitir("estado", rol, estado="esperando")

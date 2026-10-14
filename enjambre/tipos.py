@@ -47,3 +47,19 @@ class Contexto:
 
 # lanzar(agente, instancia, encargo, ctx) -> Resultado
 Lanzar = Callable[["Agente", str, str, Contexto], Awaitable[Resultado]]
+
+
+@dataclass
+class Lectura:
+    """Resultado de leer una fuente (fase 3): lo que `leer` devuelve a la cola,
+    al aviso y a la línea de órdenes."""
+    fuente: str
+    nombre: str
+    commit: str | None
+    run: str | None  # None si no se lanzó nada (sin_cambios)
+    salida: Path | None
+    motivo: str  # el de run_fin, o "sin_cambios"
+    vueltas: int
+    coste_usd: float  # lo gastado EN ESTA lectura: una continuación no cuenta lo anterior (D24, D30)
+    nota: Path | None
+    continuado: bool = False
