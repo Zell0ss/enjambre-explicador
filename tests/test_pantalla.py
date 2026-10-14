@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -435,3 +436,162 @@ def test_directo_no_cierra_en_run_fin_si_sigue_en_marcha_el_mismo_run(tmp_path):
             proc.kill()
             proc.wait(timeout=5)
         s.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Fase 3, Tarea 25 (D31, D33): URL, Lanzar ahora / Encolar, la cola, el
+# cerrojo. Las seis primeras son las del plan (normativas en lo que
+# comprueban); el resto, añadidas.
+# ---------------------------------------------------------------------------
+
+_MUERE = (
+    "import sys\n"
+    "print('GitFallo: repo privado o inexistente', file=sys.stderr)\n"
+    "sys.exit(2)\n"
+)
+
+_RETENER = (
+    "import fcntl, sys, time\n"
+    "f = open(sys.argv[1], 'a')\n"
+    "fcntl.flock(f, fcntl.LOCK_EX)\n"
+    "print('ok', flush=True)\n"
+    "time.sleep(30)\n"
+)
+
+
+@pytest.fixture
+def fase3(tmp_path):
+    """Servidor con `comando` de mentira (guarda los argv que recibe), cola y
+    cerrojo en `tmp_path`. `cmd` elige qué proceso de mentira se lanza."""
+    salidas, est, raiz = tmp_path / "salidas", tmp_path / "pantalla", tmp_path / "data"
+    salidas.mkdir(); est.mkdir(); (raiz / "agora").mkdir(parents=True)
+    (est / "index.html").write_text("x")
+    vistos, marca = [], tmp_path / "marca.txt"
+    cmd = {"codigo": _FALSO}
+
+    def comando(args):
+        vistos.append(args)
+        return [sys.executable, "-c", cmd["codigo"], str(marca)]
+
+    s = crear_servidor("127.0.0.1", 0, salidas, est, raiz_repos=raiz, comando=comando,
+                       dir_logs=tmp_path / "logs", raiz_cola=tmp_path / "cola", cerrojo=tmp_path / "c.lock")
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{s.server_address[1]}"
+    yield SimpleNamespace(base=base, salidas=salidas, raiz=raiz, vistos=vistos, cmd=cmd,
+                          cola=tmp_path / "cola", cerrojo=tmp_path / "c.lock", server=s)
+    _post(base + "/api/parar")
+    s.shutdown()
+
+
+def _esperar_fin(base):
+    for _ in range(50):
+        estado = json.loads(get(base + "/api/lanzador")[1])
+        if not estado["en_marcha"]:
+            return estado
+        time.sleep(0.1)
+    raise AssertionError("el proceso de mentira no acabó")
+
+
+def test_lanzar_acepta_url_y_lanza_leer(fase3):
+    codigo, r = _post(fase3.base + "/api/lanzar",
+                      {"repo": "https://github.com/x/proyecto.git", "tope_usd": 1, "max_vueltas": 0, "falso": True})
+    assert codigo == 202 and r["repo"] == "proyecto" and r["run"].startswith("proyecto-")
+    args = fase3.vistos[-1]
+    assert args[0] == "https://github.com/x/proyecto" and "--falso" in args
+    assert args[args.index("--run") + 1] == r["run"]
+
+
+def test_lanzar_rechaza_url_no_github(fase3):
+    assert _post(fase3.base + "/api/lanzar", {"repo": "https://gitlab.com/x/y", **VALIDO})[0] == 400
+    assert fase3.vistos == []
+
+
+@pytest.mark.parametrize("ruta", ["/api/lanzar", "/api/reanudar"])
+def test_lanzar_409_si_el_cerrojo_esta_ocupado(fase3, ruta):
+    p = subprocess.Popen([sys.executable, "-c", _RETENER, str(fase3.cerrojo)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == "ok"
+        _run_parado(fase3.salidas, fase3.raiz / "agora")
+        cuerpo = ({"repo": str(fase3.raiz / "agora"), **VALIDO} if ruta == "/api/lanzar"
+                  else {"repo": "agora", "run": "agora-1", "tope_usd": 2, "max_vueltas": 2})
+        codigo, r = _post(fase3.base + ruta, cuerpo)
+        assert codigo == 409 and "otro run" in r["error"]
+        assert fase3.vistos == []  # `comando` no se llamó
+    finally:
+        p.kill()
+        p.wait()
+
+
+def test_encolar_y_ver_la_cola(fase3):
+    c1, r1 = _post(fase3.base + "/api/encolar", {"repo": "https://github.com/x/a"})
+    assert c1 == 201 and r1 == {"fuente": "https://github.com/x/a", "nombre": "a", "nuevo": True}
+    c2, r2 = _post(fase3.base + "/api/encolar", {"repo": "https://github.com/x/a.git"})
+    assert c2 == 200 and r2["nuevo"] is False
+    cola = json.loads(get(fase3.base + "/api/cola")[1])
+    [pend] = cola["pendientes"]
+    assert pend["fuente"] == "https://github.com/x/a" and pend["nombre"] == "a" and pend["intentos"] == 0
+    assert cola["fallidas"] == []
+
+
+def test_encolar_sin_cabeceras_anti_csrf(fase3):
+    assert _post(fase3.base + "/api/encolar", {"repo": "https://github.com/x/a"}, cabeceras=False)[0] == 403
+    assert json.loads(get(fase3.base + "/api/cola")[1])["pendientes"] == []
+
+
+def test_lanzador_cuenta_el_error_de_un_proceso_que_muere_antes_del_run(fase3):
+    fase3.cmd["codigo"] = _MUERE
+    _, r = _post(fase3.base + "/api/lanzar",
+                 {"repo": "https://github.com/x/privado", "tope_usd": 1, "max_vueltas": 0, "falso": True})
+    estado = _esperar_fin(fase3.base)
+    assert estado == {"en_marcha": False, "repo": "privado", "run": r["run"], "codigo": 2,
+                      "error": "GitFallo: repo privado o inexistente"}
+
+
+def test_encolar_rechaza_lo_que_no_es_una_fuente(fase3):
+    for repo in ("https://gitlab.com/x/y", "/etc", "", 5):
+        assert _post(fase3.base + "/api/encolar", {"repo": repo})[0] == 400
+    assert json.loads(get(fase3.base + "/api/cola")[1])["pendientes"] == []
+
+
+def test_directo_de_un_run_que_murio_sin_crearse_es_404_rapido(fase3):
+    # Antes esperaba 30 s a un run que ya sabíamos que no iba a existir.
+    fase3.cmd["codigo"] = _MUERE
+    _, r = _post(fase3.base + "/api/lanzar",
+                 {"repo": "https://github.com/x/privado", "tope_usd": 1, "max_vueltas": 0, "falso": True})
+    _esperar_fin(fase3.base)
+    inicio = time.monotonic()
+    with pytest.raises(urllib.error.HTTPError) as e:
+        get(fase3.base + f"/api/directo/privado/{r['run']}")
+    assert e.value.code == 404 and time.monotonic() - inicio < 2
+
+
+def test_directo_espera_al_run_que_aun_se_esta_clonando(fase3):
+    # El proceso vive y crea el run pasado un rato: el directo no se rinde antes.
+    fase3.cmd["codigo"] = (
+        "import sys, time, pathlib, json\n"
+        "time.sleep(1.5)\n"
+        "salidas = pathlib.Path(sys.argv[2]); run = sys.argv[3]\n"
+        "d = salidas / 'proyecto' / run; d.mkdir(parents=True)\n"
+        "(d / 'eventos.jsonl').write_text(json.dumps({'t': 'x', 'run': run, 'tipo': 'run_inicio'}) + '\\n' + "
+        "json.dumps({'t': 'y', 'run': run, 'tipo': 'run_fin', 'motivo': 'aprobado'}) + '\\n')\n"
+    )
+    fase3.server.comando = lambda args: [sys.executable, "-c", fase3.cmd["codigo"], "x",
+                                         str(fase3.salidas), args[args.index("--run") + 1]]
+    _, r = _post(fase3.base + "/api/lanzar",
+                 {"repo": "https://github.com/x/proyecto", "tope_usd": 1, "max_vueltas": 0, "falso": True})
+    tipos = []
+    with urllib.request.urlopen(fase3.base + f"/api/directo/proyecto/{r['run']}", timeout=10) as resp:
+        for linea in resp:
+            if linea.startswith(b"data: "):
+                tipos.append(json.loads(linea[6:])["tipo"])
+    assert tipos == ["run_inicio", "run_fin"]
+
+
+def test_la_pantalla_no_importa_el_orquestador_ni_el_sdk():
+    # D6/D21: el run es un subproceso aparte; el servidor solo sirve.
+    codigo = ("import sys, enjambre.pantalla\n"
+              "malos = [m for m in ('enjambre.orquestar', 'enjambre.leer', 'enjambre.lanzador', 'claude_agent_sdk') if m in sys.modules]\n"
+              "print(malos)\nsys.exit(1 if malos else 0)\n")
+    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True,
+                       cwd=Path(__file__).resolve().parent.parent)
+    assert r.returncode == 0, r.stdout + r.stderr

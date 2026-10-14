@@ -30,6 +30,13 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+# D6: este módulo no importa `enjambre.orquestar` ni el SDK (el run es un
+# subproceso aparte, D21). `cola` solo importa `leer` dentro de una función,
+# que la pantalla nunca llama; `tests/test_pantalla.py` lo comprueba.
+from enjambre import cerrojo as cerrojo_mod
+from enjambre import cola as cola_mod
+from enjambre.fuente import Fuente, FuenteInvalida, resolver
+
 # Raíz de ESTE repo (enjambre-explicador), no la del repo que se vaya a
 # analizar -- el subproceso de un run lanzado desde la página (anexo
 # 2026-10-04, Tarea 15, D21) se arranca con este directorio como `cwd` para
@@ -42,6 +49,11 @@ _RAIZ_ENJAMBRE = Path(__file__).resolve().parent.parent
 # `subprocess.Popen` y `send_signal(SIGINT)` si el proceso recién lanzado
 # aún no ha instalado su manejador de señales).
 _MARGEN_ARRANQUE_S = 0.2
+
+# Una URL tarda en clonarse (hasta los 300 s de `fuente.actualizar`) y el run
+# no existe hasta entonces: el directo espera mientras el proceso siga vivo,
+# con este tope por si se cuelga (D33).
+_ESPERA_DIRECTO_MAX_S = 900
 
 # Rutas de §5.1 del diseño. Los grupos de repo/run son `[^/]+` (un solo
 # segmento); `<ruta...>` de /api/fichero es `.+` (puede llevar más barras:
@@ -85,28 +97,29 @@ def _resuelve_dentro(base: Path, ruta_relativa: str) -> Path | None:
     return None
 
 
-def _valida_lanzar(cuerpo: dict, raiz_repos: Path) -> tuple[Path, float, int, bool] | str:
-    """Valida el cuerpo de `POST /api/lanzar` (anexo 2026-10-04, Tarea 15,
-    D21). Devuelve `(repo, tope_usd, max_vueltas, falso)` ya validados y
-    listos para pasar a `comando`, o un string con el motivo del rechazo
-    (400) -- nunca lanza: toda entrada de red es sospechosa por defecto,
-    mismo criterio que `_resuelve_dentro` para las rutas de `/api/fichero`.
+def _valida_lanzar(cuerpo: dict, raiz_repos: Path) -> tuple[Fuente, float, int, bool] | str:
+    """Valida el cuerpo de `POST /api/lanzar` (D21, D33). Devuelve `(fuente,
+    tope_usd, max_vueltas, falso)` ya validados y listos para pasar a
+    `comando`, o un string con el motivo del rechazo (400) -- nunca lanza:
+    toda entrada de red es sospechosa por defecto, mismo criterio que
+    `_resuelve_dentro` para las rutas de `/api/fichero`.
+
+    `repo` puede ser una URL pública de GitHub o una ruta bajo `raiz_repos`
+    (D26): lo decide `fuente.resolver`, que es el único que sabe qué es una
+    fuente válida, y devuelve la forma canónica.
 
     `isinstance(x, bool)` antes que `isinstance(x, (int, float))` en
     `tope_usd`/`max_vueltas` porque `bool` es subclase de `int` en Python --
     sin ese orden, `{"tope_usd": true}` colaría como `tope_usd=1`."""
     repo = cuerpo.get("repo")
     if not isinstance(repo, str) or not repo:
-        return "repo debe ser una ruta no vacía"
+        return "repo debe ser una URL de GitHub o una ruta no vacía"
     try:
-        repo_path = Path(repo).resolve()
-    except (OSError, ValueError):
+        fuente = resolver(repo, raiz_local=raiz_repos)
+    except FuenteInvalida as e:
+        return str(e)
+    except (OSError, RuntimeError, ValueError):
         return "repo no es una ruta válida"
-    raiz_r = raiz_repos.resolve()
-    if not (repo_path == raiz_r or repo_path.is_relative_to(raiz_r)):
-        return f"repo debe estar bajo {raiz_r}"
-    if not repo_path.is_dir():
-        return "repo no es un directorio existente"
 
     tope_usd = cuerpo.get("tope_usd")
     if isinstance(tope_usd, bool) or not isinstance(tope_usd, (int, float)) or not (0 < tope_usd <= 10):
@@ -120,7 +133,7 @@ def _valida_lanzar(cuerpo: dict, raiz_repos: Path) -> tuple[Path, float, int, bo
     if not isinstance(falso, bool):
         return "falso debe ser un booleano"
 
-    return repo_path, float(tope_usd), max_vueltas, falso
+    return fuente, float(tope_usd), max_vueltas, falso
 
 
 def _valida_reanudar_campos(cuerpo: dict) -> tuple[str, str, float, int] | str:
@@ -209,6 +222,21 @@ def _listar_runs(salidas: Path) -> list[dict]:
     return runs
 
 
+def _ultima_linea(log: Path | None) -> str:
+    """Última línea no vacía del log de un run lanzado desde la página: es donde
+    `enjambre.leer` deja su error (`GitFallo: ...`) cuando sale con código 2."""
+    if log is None:
+        return ""
+    try:
+        with log.open("rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            cola = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    return next((l.strip() for l in reversed(cola.splitlines()) if l.strip()), "")
+
+
 class _ManejadorPantalla(BaseHTTPRequestHandler):
     """`self.server` es la subclase de `ThreadingHTTPServer` que crea
     `crear_servidor`, con `.salidas` y `.estaticos` ya puestos."""
@@ -240,7 +268,7 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         preflight falla antes de que el navegador llegue a mandar el POST
         de verdad."""
         ruta = urllib.parse.urlsplit(self.path).path
-        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar"):
+        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar", "/api/encolar"):
             self.send_error(404)
             return
 
@@ -253,6 +281,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             self._lanzar()
         elif ruta == "/api/parar":
             self._parar()
+        elif ruta == "/api/encolar":
+            self._encolar()
         else:
             self._reanudar()
 
@@ -280,21 +310,25 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         if isinstance(validado, str):
             self._responde_json(400, {"error": validado})
             return
-        repo_path, tope_usd, max_vueltas, falso = validado
+        fuente, tope_usd, max_vueltas, falso = validado
 
         with self.server.lock:  # type: ignore[attr-defined]
             proc = self.server.proc  # type: ignore[attr-defined]
             if proc is not None and proc.poll() is None:
                 self._responde_json(409, {"error": "ya hay un run en marcha"})
                 return
+            # D31: un run a la vez en la MÁQUINA, no solo en este proceso: la
+            # cola de la noche o una terminal pueden tener el cerrojo.
+            if cerrojo_mod.ocupado(self.server.cerrojo):  # type: ignore[attr-defined]
+                self._responde_json(409, {"error": "hay otro run en marcha (¿la cola?)"})
+                return
 
             # Con segundos (no solo %Y%m%d-%H%M como el nombre por defecto
             # de `orquestar()`) para no chocar si Josem lanza dos veces
             # seguidas dentro del mismo minuto.
-            run = f"{repo_path.name}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+            run = f"{fuente.nombre}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
             args = [
-                "--repo",
-                str(repo_path),
+                fuente.texto,
                 "--salidas",
                 str(self.server.salidas),  # type: ignore[attr-defined]
                 "--tope-usd",
@@ -310,7 +344,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
 
             dir_logs = self.server.dir_logs  # type: ignore[attr-defined]
             dir_logs.mkdir(parents=True, exist_ok=True)
-            with open(dir_logs / f"{run}.log", "wb") as log_fh:
+            log = dir_logs / f"{run}.log"
+            with open(log, "wb") as log_fh:
                 # start_new_session=True: el run sobrevive a un reinicio de
                 # la pantalla (que entonces lo "olvida" -- /api/lanzador
                 # volverá a decir en_marcha=false; aceptado en el POC, el
@@ -326,10 +361,11 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
                 )
             self.server.proc = proc  # type: ignore[attr-defined]
             self.server.proc_lanzado_en = time.monotonic()  # type: ignore[attr-defined]
-            self.server.proc_repo = repo_path.name  # type: ignore[attr-defined]
+            self.server.proc_repo = fuente.nombre  # type: ignore[attr-defined]
             self.server.proc_run = run  # type: ignore[attr-defined]
+            self.server.proc_log = log  # type: ignore[attr-defined]
 
-        self._responde_json(202, {"repo": repo_path.name, "run": run})
+        self._responde_json(202, {"repo": fuente.nombre, "run": run})
 
     def _reanudar(self) -> None:
         """`POST /api/reanudar` (D24, anexo 2026-10-04 (3)): mismo patrón de
@@ -383,6 +419,9 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             if proc is not None and proc.poll() is None:
                 self._responde_json(409, {"error": "ya hay un run en marcha"})
                 return
+            if cerrojo_mod.ocupado(self.server.cerrojo):  # type: ignore[attr-defined]
+                self._responde_json(409, {"error": "hay otro run en marcha (¿la cola?)"})
+                return
 
             args = [
                 "--reanudar",
@@ -400,7 +439,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             dir_logs.mkdir(parents=True, exist_ok=True)
             # "ab" (no "wb" como `_lanzar`): este run ya tenía un log de su
             # primer tramo -- se añade, no se pisa.
-            with open(dir_logs / f"{run}.log", "ab") as log_fh:
+            log = dir_logs / f"{run}.log"
+            with open(log, "ab") as log_fh:
                 proc = subprocess.Popen(
                     argv,
                     cwd=_RAIZ_ENJAMBRE,
@@ -412,8 +452,41 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             self.server.proc_lanzado_en = time.monotonic()  # type: ignore[attr-defined]
             self.server.proc_repo = repo  # type: ignore[attr-defined]
             self.server.proc_run = run  # type: ignore[attr-defined]
+            self.server.proc_log = log  # type: ignore[attr-defined]
 
         self._responde_json(202, {"repo": repo, "run": run})
+
+    def _encolar(self) -> None:
+        """`POST /api/encolar` (D29, D33): pone una fuente en la cola de la
+        noche. Misma validación que `/api/lanzar` (`fuente.resolver`, sin `git`
+        ni red). 201 si es nueva, 200 si ya estaba pendiente, 400 si no vale."""
+        longitud = int(self.headers.get("Content-Length") or 0)
+        crudo = self.rfile.read(longitud) if longitud > 0 else b""
+        try:
+            cuerpo = json.loads(crudo) if crudo else {}
+        except json.JSONDecodeError:
+            self._responde_json(400, {"error": "cuerpo no es JSON válido"})
+            return
+        repo = cuerpo.get("repo") if isinstance(cuerpo, dict) else None
+        if not isinstance(repo, str) or not repo:
+            self._responde_json(400, {"error": "repo debe ser una URL de GitHub o una ruta no vacía"})
+            return
+        try:
+            ruta, nuevo = cola_mod.encolar(
+                repo, raiz_cola=self.server.raiz_cola, raiz_local=self.server.raiz_repos  # type: ignore[attr-defined]
+            )
+        except FuenteInvalida as e:
+            self._responde_json(400, {"error": str(e)})
+            return
+        except (OSError, RuntimeError, ValueError):
+            self._responde_json(400, {"error": "repo no es una ruta válida"})
+            return
+        peticion = json.loads(ruta.read_text(encoding="utf-8"))
+        self._responde_json(201 if nuevo else 200, {"fuente": peticion["fuente"], "nombre": peticion["nombre"], "nuevo": nuevo})
+
+    def _servir_cola(self) -> None:
+        raiz = self.server.raiz_cola  # type: ignore[attr-defined]
+        self._responde_json(200, {"pendientes": cola_mod.pendientes(raiz), "fallidas": cola_mod.fallidas(raiz)})
 
     def _parar(self) -> None:
         with self.server.lock:  # type: ignore[attr-defined]
@@ -450,14 +523,25 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
     def _servir_lanzador(self) -> None:
         proc = self.server.proc  # type: ignore[attr-defined]
         en_marcha = proc is not None and proc.poll() is None
-        self._responde_json(
-            200,
-            {
-                "en_marcha": en_marcha,
-                "repo": self.server.proc_repo if en_marcha else None,  # type: ignore[attr-defined]
-                "run": self.server.proc_run if en_marcha else None,  # type: ignore[attr-defined]
-            },
-        )
+        cuerpo = {
+            "en_marcha": en_marcha,
+            "repo": self.server.proc_repo if en_marcha else None,  # type: ignore[attr-defined]
+            "run": self.server.proc_run if en_marcha else None,  # type: ignore[attr-defined]
+        }
+        if proc is not None and not en_marcha:
+            repo, run = self.server.proc_repo, self.server.proc_run  # type: ignore[attr-defined]
+            run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
+            if run_dir is None or not (run_dir / "eventos.jsonl").is_file():
+                # D33: el proceso murió antes de crear el run (repo privado o
+                # inexistente, copia ajena, cerrojo ocupado...). Sin esto la
+                # página esperaría un directo que nunca llega.
+                cuerpo.update(
+                    repo=repo,
+                    run=run,
+                    codigo=proc.returncode,
+                    error=_ultima_linea(self.server.proc_log),  # type: ignore[attr-defined]
+                )
+        self._responde_json(200, cuerpo)
 
     def _despacha(self) -> None:
         ruta = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
@@ -486,6 +570,10 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
 
         if ruta == "/api/lanzador":
             self._servir_lanzador()
+            return
+
+        if ruta == "/api/cola":
+            self._servir_cola()
             return
 
         m = _RUTA_EVENTOS.match(ruta)
@@ -590,16 +678,24 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         es_el_ultimo_lanzado = (
             repo == self.server.proc_repo and run == self.server.proc_run  # type: ignore[attr-defined]
         )
-        plazo = time.monotonic() + (30 if es_el_ultimo_lanzado else 0)
+        limite = time.monotonic() + (_ESPERA_DIRECTO_MAX_S if es_el_ultimo_lanzado else 0)
         eventos_path = None
         while True:
+            # D33: con una URL, el run no existe hasta que acaba el clon. Se
+            # espera mientras el proceso siga vivo; si ya acabó sin crear el
+            # run (repo privado, copia ajena, cerrojo), no hay nada que esperar
+            # -- el motivo lo cuenta `/api/lanzador`. `terminado` se lee ANTES
+            # de mirar el disco: si el proceso crea el fichero y sale entre
+            # las dos cosas, no se pierde.
+            proc = self.server.proc  # type: ignore[attr-defined]
+            terminado = es_el_ultimo_lanzado and (proc is None or proc.poll() is not None)
             run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
             if run_dir is not None and run_dir.is_dir():
                 candidato = run_dir / "eventos.jsonl"
                 if candidato.is_file():
                     eventos_path = candidato
                     break
-            if time.monotonic() >= plazo:
+            if not es_el_ultimo_lanzado or terminado or time.monotonic() >= limite:
                 self.send_error(404)
                 return
             time.sleep(0.3)
@@ -677,6 +773,8 @@ def crear_servidor(
     raiz_repos: Path = Path("/data"),
     comando: Callable[[list[str]], list[str]] | None = None,
     dir_logs: Path = _RAIZ_ENJAMBRE / "logs" / "lanzamientos",
+    raiz_cola: Path | None = None,
+    cerrojo: Path | None = None,
 ) -> ThreadingHTTPServer:
     """Crea el servidor sin arrancarlo (el llamador decide hilo/`serve_forever`,
     como hace `tests/test_pantalla.py` y `main` de abajo).
@@ -688,7 +786,13 @@ def crear_servidor(
     *args]` -- las pruebas lo sustituyen por un proceso de mentira que no
     importa nada de `enjambre` ni gasta un token, ver `tests/test_pantalla.py`);
     `dir_logs` es dónde cae el stdout+stderr combinado de cada run lanzado
-    así (un fichero por run, `<run>.log`)."""
+    así (un fichero por run, `<run>.log`).
+
+    Fase 3 (D31, D33): `comando` por defecto lanza `enjambre.leer`, que
+    acepta una URL o una ruta; `raiz_cola` es el directorio de la cola de la
+    noche y `cerrojo` el fichero del cerrojo de máquina. Los dos son `None` y
+    se resuelven aquí, no en la firma: un valor por defecto en la firma se
+    fija al importar y las pruebas no podrían redirigirlo."""
 
     class _Servidor(ThreadingHTTPServer):
         # D12: cada conexión (incluidas las SSE, que se quedan abiertas
@@ -700,7 +804,9 @@ def crear_servidor(
     servidor.salidas = salidas  # type: ignore[attr-defined]
     servidor.estaticos = estaticos  # type: ignore[attr-defined]
     servidor.raiz_repos = raiz_repos  # type: ignore[attr-defined]
-    servidor.comando = comando or (lambda args: [sys.executable, "-m", "enjambre.orquestar", *args])  # type: ignore[attr-defined]
+    servidor.comando = comando or (lambda args: [sys.executable, "-m", "enjambre.leer", *args])  # type: ignore[attr-defined]
+    servidor.raiz_cola = raiz_cola or cola_mod.RAIZ_COLA  # type: ignore[attr-defined]
+    servidor.cerrojo = cerrojo or cerrojo_mod.RUTA  # type: ignore[attr-defined]
     servidor.dir_logs = dir_logs  # type: ignore[attr-defined]
     # Un run a la vez (D21): `lock` protege el check-y-arranca de
     # `_lanzar`/`_parar` contra dos POST concurrentes; `proc`/`proc_repo`/
@@ -711,6 +817,7 @@ def crear_servidor(
     servidor.proc_lanzado_en = None  # type: ignore[attr-defined]
     servidor.proc_repo = None  # type: ignore[attr-defined]
     servidor.proc_run = None  # type: ignore[attr-defined]
+    servidor.proc_log = None  # type: ignore[attr-defined]
     return servidor
 
 
