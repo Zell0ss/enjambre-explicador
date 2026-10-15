@@ -11,12 +11,36 @@ Orquestador Python que lanza 7 agentes Claude vía Claude Agent SDK, más una pa
 .venv/bin/pytest -v
 node --test tests/js/*.mjs
 
-# Ejecutar orquestador sobre un repo (desarrollo con repo fake/test)
+# Ejecutar orquestador sobre un repo (desarrollo con repo fake/test; no escribe nota ni avisa)
 python -m enjambre.orquestar --repo <ruta> [--falso]
+
+# Fase 3: leer una fuente (URL de GitHub o ruta bajo /data) -> copia, run, nota en el vault, aviso
+python -m enjambre.leer <fuente> [--tope-usd] [--falso] [--sin-aviso]
+python -m enjambre.leer --reanudar <salida>     # continuar un run parado (D24, D36)
+
+# Fase 3: la cola y la noche (el timer systemd la lanza a las 02:30)
+python -c "from enjambre.cola import encolar; print(encolar('https://github.com/<dueño>/<repo>'))"
+python -m enjambre.cola [--falso] [--techo-usd 10]
 
 # Arrancar pantalla
 python -m enjambre.pantalla
 ```
+
+## Fase 3 (abordaje): piezas y reglas
+
+`fuente.py` (D26, D27, D37, D38) · `nota.py` (D28) · `aviso.py` (D32, D34) · `leer.py` · `cola.py` (D29, D30, D35) · `cerrojo.py` (D31).
+
+- **Solo `fuente.py` llama a `git`**, siempre por `_git` (sin terminal, sin credenciales, `stdin` cerrado, timeout, lista de argumentos y `--`). Nunca `shell=True`.
+- **Una copia de `/data/github-abordaje/` solo se toca si la clonó el enjambre (marca `.git/enjambre`) y sigue intacta** (D38). Cualquier otra cosa es `CopiaAjena`: no se arregla en código, se borra a mano. Una vez se perdió trabajo de otro proyecto por no comprobarlo.
+- **Identidad de un repo = URL en minúsculas** (D37). Las rutas locales conservan sus mayúsculas.
+- **Solo `nota.py` escribe en el vault**, y solo en `Clippings/repo-articles/`, atómico, con `generado_por: enjambre`. La nota ajena se comprueba **antes** de gastar (`nota.comprobar`).
+- **Un run a la vez en la máquina** (`cerrojo.py`, `flock` sobre `cerrojo.lock`): lo toma quien ejecuta (`leer.main`, `orquestar.main`, `cola.main`), nunca `orquestar()`/`reanudar()`. La pantalla solo lo mira (`ocupado`) y le pasa al hijo el mismo `--cerrojo`.
+- **El coste de una continuación es solo lo de esa lectura** (`Lectura.coste_usd`); el techo de la noche (D30) lo suma así. La nota lleva el coste del run entero.
+- **Valores por defecto de ruta, nunca en la firma:** `def f(ruta=None)` y `ruta or RUTA` dentro (si no, las pruebas no pueden redirigirlos). `tests/conftest.py` redirige el cerrojo a `tmp_path`.
+- **Las pruebas no tocan la red, la API, el vault, `/data/github-abordaje`, `cola/`, `cerrojo.lock` ni `.env`.** Los "remotos" son repos *bare* locales (`file://`, `tests/gitutil.py`).
+- **`.env`** (Telegram, D34) lo crea Josem y nunca se lee ni se commitea.
+- **Este directorio arranca un servicio (el timer de la noche): se queda en `main` y limpio.** Para trabajar, `git worktree add ../enjambre-explicador-<rama> -b feature/<rama>` con `.venv` propio. Fusiona Josem con `--ff-only`.
+- Un `--falso` nunca escribe en el vault (la nota va a `<salida>/nota.md`) ni cuenta para saltar o continuar un run real (D35, R4).
 
 ## Reglas
 
@@ -34,7 +58,7 @@ python -m enjambre.pantalla
 - **Las pruebas no llaman a la API.** Nada en `pytest` gasta tokens. Llamadas reales solo en pasos marcados [API] con modelo indicado.
 
 **Pantalla:**
-- Escucha por defecto en `100.87.64.121:8790` (Tailscale seb01), nunca `0.0.0.0`. 
+- Escucha por defecto en `100.87.64.121:8790` (Tailscale seb01), nunca `0.0.0.0`. No importa el orquestador ni el SDK: lanza `enjambre.leer` como subproceso (D21, D33).
 - Pruebas en `127.0.0.1` con puerto efímero.
 - Estados de agente exactos: `esperando`, `leyendo`, `escribiendo`, `bloqueado`, `terminado`.
 - Tipos de evento exactos (§4 spec): `run_inicio`, `lanzado`, `estado`, `herramienta`, `denegado`, `fichero`, `respuesta`, `fin_agente`, `aviso`, `vuelta`, `run_fin`.
