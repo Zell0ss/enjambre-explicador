@@ -116,3 +116,20 @@ que el fichero estaba duplicado y no miré las ramas. El otro proyecto ya se ha 
 5. Migración: `/data/github-abordaje/repomix` no tiene marca. Josem la borra y el enjambre la vuelve a
    clonar, o se queda como ajena. `/data/github-abordaje/Claude-Fables` **no se toca**: es del otro proyecto
    hasta que diga que se ha ido.
+
+**Resolución (2026-10-15): Josem aprueba D38.** D27 queda revisada por D38. Implementa los puntos 1-4
+del §6 en esta rama, junto con D36 y D37 (§5), en este orden: **D38 primero**. Es lo que protege a
+otros proyectos, y D37 cambia a qué directorio se apunta.
+
+- Las siete pruebas (a)-(g) del punto 4 son **normativas** desde ya. Escríbelas tal cual las describe
+  el punto 4, con `tmp_path` y el helper `tests/gitutil.py`. Cada una comprueba *también* que lo local
+  sigue en disco después del `CopiaAjena`.
+- Sustituye `test_actualiza_y_descarta_lo_local` (normativa de H1) por (c) y (f): el arquitecto la da por
+  superada. Si alguna prueba añadida tuya de `test_fuente_seguridad.py` contaba con que lo local se
+  descartaba, cámbiala y dilo en el informe.
+- El mensaje de `CopiaAjena` dice qué ha encontrado (sin marca, rama `x`, fichero `y`, commit local) y
+  qué hacer: «si es una copia del enjambre, bórrala y se volverá a clonar».
+- **No toques** `/data/github-abordaje/` en ningún paso manual: ni `Claude-Fables` (de otro proyecto) ni
+  `repomix` (sin marca: la decide Josem). La prueba manual, con una URL a un directorio de `tmp`.
+
+Informe: `docs/fase3/H4b-informe.md`, con D38, D36 y D37. Gasto: **0**. Para al acabar.
