@@ -75,3 +75,44 @@ Registradas como **D36** y **D37** en el diseño (D26 queda revisada por D37). L
 - `/data/github-abordaje/Claude-Fables` queda huérfana. **No la borres tú:** es de Josem.
 
 Después, `docs/fase3/H4b-informe.md` corto y para. Gasto: **0**.
+
+## 6. Incidente (2026-10-15): `actualizar()` borró trabajo de otro proyecto
+
+**Qué pasó.** Lo informa el proyecto claude-fables. El 2026-10-14 a las 22:38, una lectura de
+Claude-Fables ejecutó `fetch` + `reset --hard` + `clean -fdx` sobre `/data/github-abordaje/Claude-Fables`.
+Esa copia tenía 9 commits locales en `fase1-motor` y un `articulo.md` sin commitear de ese proyecto.
+Se pudo recuperar: había una rama de rescate y `articulo.md` estaba en `salidas/`. Salió bien por
+suerte, no por diseño.
+
+**Atribución: arquitecto.** D27 dio por hecho que todo lo que hubiera bajo `raiz_copias` era una
+caché desechable. Las comprobaciones de H1 (ruta, raíz del repo, `origin`) demuestran *de qué URL* es
+la copia, no *que sea desechable*. Además, en la revisión de H2 vi el `articulo.md` suelto, comprobé
+que el fichero estaba duplicado y no miré las ramas. El otro proyecto ya se ha ido a `/data/claude-fables`.
+
+**Propuesta del arquitecto (D38, pendiente de Josem). No la implementes hasta que llegue la resolución aquí.**
+
+1. **Marca de propiedad.** Tras un `clone` propio, `actualizar` escribe `.git/enjambre`, dentro de
+   `.git` para que `clean -fdx` no la borre, con el commit que ha dejado. Una copia **sin marca** es
+   `CopiaAjena`, y el mensaje dice cómo resolverlo: borrar la copia para que el enjambre la vuelva a
+   clonar.
+2. **Una copia marcada también tiene que estar intacta** antes de `reset`/`clean`, porque una persona
+   puede ponerse a trabajar en ella después:
+   - `git status --porcelain --ignored` vacío;
+   - exactamente una rama local (`for-each-ref refs/heads`);
+   - `rev-parse HEAD` igual al commit de la marca (cualquier commit local lo cambia).
+
+   Si falla cualquiera de las tres, `CopiaAjena` («la copia tiene trabajo local: …») y no se toca nada.
+3. Después de actualizar, la marca se reescribe con el commit nuevo.
+4. *Pruebas normativas de falsación* (todas con `tmp_path`; si no se pueden probar así, la defensa no existe):
+   a. copia sin marca → `CopiaAjena`, sin cambios en disco;
+   b. marcada + rama local nueva → `CopiaAjena`, la rama sigue;
+   c. marcada + fichero sin seguimiento → `CopiaAjena`, el fichero sigue;
+   d. marcada + commit local → `CopiaAjena`, el commit sigue;
+   e. marcada + fichero ignorado por `.gitignore` → `CopiaAjena`;
+   f. marcada e intacta + commit nuevo en el remoto → se actualiza y la marca lleva el commit nuevo;
+   g. `clone` nuevo → deja la marca con el commit clonado.
+   El plan y las pruebas de H1 que esperaban "lo local sucio se descarta" (`test_actualiza_y_descarta_lo_local`)
+   quedan **superados**: el arquitecto los cambia por (c) y (f).
+5. Migración: `/data/github-abordaje/repomix` no tiene marca. Josem la borra y el enjambre la vuelve a
+   clonar, o se queda como ajena. `/data/github-abordaje/Claude-Fables` **no se toca**: es del otro proyecto
+   hasta que diga que se ha ido.
