@@ -45,6 +45,33 @@ Ninguno de implementación. Los dos puntos abiertos son decisiones de Josem (§3
 real y `git worktree remove` los hace Josem, **después** de los retoques del §5 si los aprueba, para
 fusionar una sola vez. Gasto autorizado: **0**.
 
-## 5. Resolución de Josem
+## 5. Resolución de Josem (2026-10-15): sí a las dos
 
-*(pendiente)*
+Registradas como **D36** y **D37** en el diseño (D26 queda revisada por D37). Lo que pide, en esta misma rama:
+
+**1. D36: "Continuar" no lanza un run nuevo si el repo ha cambiado.**
+- `leer(..., si_cambio: Literal["nuevo", "error"] = "nuevo")`. Con `"error"`, si el commit actual
+  no es el del run que se continúa (o no hay commit con qué comparar), lanza
+  `RepoCambiado(ValueError)` **antes de lanzar nada**, con el mensaje
+  `el repo ha cambiado desde que se paró (<viejo7> → <nuevo7>): lanza uno nuevo`.
+- `leer --reanudar` (la CLI, lo que usa la página) pasa `si_cambio="error"` y sale con código 2. La
+  cola no cambia: sigue con `"nuevo"` (D30).
+- `/api/lanzador` devuelve `codigo`/`error` siempre que el proceso haya acabado con un código distinto
+  de 0, de 1 y de 130, **aunque el run exista**, y la página lo enseña en el directo.
+- *Pruebas de regresión:* (a) `leer(reanudar=..., si_cambio="error")` con un commit nuevo lanza
+  `RepoCambiado`, el `lanzar` no se llama y no se crea ningún run; (b) `main(["--reanudar", ...])` en
+  ese caso devuelve 2 y el mensaje va a stderr; (c) `/api/lanzador` con un proceso de mentira que sale con
+  2 sobre un run que existe devuelve `codigo: 2` y `error`.
+
+**2. D37: la identidad de un repo de GitHub va en minúsculas.**
+- `resolver` pasa a minúsculas el dueño **y el repo**, en `texto`, `url` y `nombre`. Las rutas locales
+  no cambian: un directorio de `/data` se queda como está.
+- **Cambio de la prueba normativa** (lo decide el arquitecto, así que puedes aplicarlo):
+  en `tests/test_fuente.py`, `CANON = "https://github.com/henrik-thevibe/claude-fables"` y
+  `f.nombre == "claude-fables"`. La lista de `test_url_se_normaliza` no cambia (sigue escribiendo
+  `Claude-Fables` en las entradas) y se añade la entrada `"https://github.com/Henrik-TheVibe/CLAUDE-FABLES"`.
+  El arquitecto aplica el mismo cambio en el plan.
+- El arreglo de mayúsculas de `encolar` (`4dc8843`) sobra. Puedes dejarlo: no estorba.
+- `/data/github-abordaje/Claude-Fables` queda huérfana. **No la borres tú:** es de Josem.
+
+Después, `docs/fase3/H4b-informe.md` corto y para. Gasto: **0**.
