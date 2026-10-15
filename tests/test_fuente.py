@@ -81,20 +81,81 @@ def test_clona_si_no_hay_copia(remoto, tmp_path):
     assert commit == rev(trabajo)
 
 
-def test_actualiza_y_descarta_lo_local(remoto, tmp_path):
+def _copia(remoto, tmp_path):
+    """Clona con `actualizar` (así lleva la marca de D38) y devuelve su ruta."""
     trabajo, bare = remoto
     copias = tmp_path / "copias"
     ruta, _ = actualizar(F, raiz_copias=copias, remoto=f"file://{bare}")
-    (ruta / "a.py").write_text("tocado\n")
+    return trabajo, bare, copias, ruta
+
+
+def _otra_vez(copias, bare):
+    return actualizar(F, raiz_copias=copias, remoto=f"file://{bare}")
+
+
+# --- D38 (revisión de H4, §6): solo se toca una copia marcada e intacta. (a)-(g) normativas. ---
+
+def test_a_copia_sin_marca_es_ajena(remoto, tmp_path):
+    trabajo, bare = remoto
+    ajena = repo_con_commit(tmp_path / "copias" / "proyecto")
+    git("remote", "add", "origin", f"file://{bare}", cwd=ajena)  # misma URL, pero no la clonó el enjambre
+    (ajena / "marca.txt").write_text("mío\n")
+    antes = rev(ajena)
+    with pytest.raises(CopiaAjena, match="marca"):
+        _otra_vez(tmp_path / "copias", bare)
+    assert (ajena / "marca.txt").read_text() == "mío\n" and rev(ajena) == antes
+    assert (ajena / "a.py").exists()
+
+
+def test_b_rama_local_nueva(remoto, tmp_path):
+    _, bare, copias, ruta = _copia(remoto, tmp_path)
+    git("branch", "fase1-motor", cwd=ruta)
+    with pytest.raises(CopiaAjena, match="fase1-motor"):
+        _otra_vez(copias, bare)
+    assert "fase1-motor" in git("branch", "--list", cwd=ruta)
+
+
+def test_c_fichero_sin_seguimiento(remoto, tmp_path):
+    _, bare, copias, ruta = _copia(remoto, tmp_path)
     (ruta / "articulo.md").write_text("suelto\n")
+    with pytest.raises(CopiaAjena, match="articulo.md"):
+        _otra_vez(copias, bare)
+    assert (ruta / "articulo.md").read_text() == "suelto\n"
+
+
+def test_d_commit_local(remoto, tmp_path):
+    _, bare, copias, ruta = _copia(remoto, tmp_path)
+    repo_con_commit(ruta, "mio.py", "z = 3\n")
+    local = rev(ruta)
+    with pytest.raises(CopiaAjena, match="commit local"):
+        _otra_vez(copias, bare)
+    assert rev(ruta) == local and (ruta / "mio.py").exists()
+
+
+def test_e_fichero_ignorado(remoto, tmp_path):
+    _, bare, copias, ruta = _copia(remoto, tmp_path)
+    (ruta / ".git" / "info" / "exclude").write_text("*.log\n")
+    (ruta / "x.log").write_text("ignorado\n")
+    with pytest.raises(CopiaAjena, match="x.log"):
+        _otra_vez(copias, bare)
+    assert (ruta / "x.log").read_text() == "ignorado\n"
+
+
+def test_f_intacta_se_actualiza_y_la_marca_lleva_el_commit_nuevo(remoto, tmp_path):
+    trabajo, bare, copias, ruta = _copia(remoto, tmp_path)
     repo_con_commit(trabajo, "b.py", "y = 2\n")
     git("push", "origin", "trunk", cwd=trabajo)
 
-    ruta, commit = actualizar(F, raiz_copias=copias, remoto=f"file://{bare}")
-    assert (ruta / "a.py").read_text() == "x = 1\n"
-    assert (ruta / "b.py").exists()
-    assert not (ruta / "articulo.md").exists()
-    assert commit == rev(trabajo)
+    ruta, commit = _otra_vez(copias, bare)
+    assert commit == rev(trabajo) and (ruta / "b.py").exists()
+    assert (ruta / ".git" / "enjambre").read_text().strip() == commit
+    # ...y como sigue intacta, la siguiente vez también se puede actualizar.
+    assert _otra_vez(copias, bare)[1] == commit
+
+
+def test_g_clone_nuevo_deja_la_marca(remoto, tmp_path):
+    trabajo, _, _, ruta = _copia(remoto, tmp_path)
+    assert (ruta / ".git" / "enjambre").read_text().strip() == rev(trabajo)
 
 
 def test_copia_de_otro_origen_no_se_toca(remoto, tmp_path):

@@ -160,6 +160,47 @@ def _canonico(url: str) -> str:
     return url.strip().rstrip("/").removesuffix(".git").lower()
 
 
+# D38: dentro de `.git`, para que ni `clean` ni un `git add .` la toquen.
+_MARCA = "enjambre"
+_SALIDA = "si es una copia del enjambre, bórrala y se volverá a clonar"
+
+
+def _marcar(ruta: Path, commit: str) -> None:
+    """Escribe la marca de propiedad: el commit que el enjambre ha dejado."""
+    (ruta / ".git" / _MARCA).write_text(commit + "\n", encoding="utf-8")
+
+
+def _comprobar_intacta(ruta: Path, timeout_s: float) -> None:
+    """D38. `CopiaAjena` (sin tocar nada) salvo que la copia lleve la marca del
+    enjambre y siga exactamente como la dejó: sin cambios ni ficheros nuevos
+    (ignorados incluidos), una sola rama local y `HEAD` en el commit de la marca.
+    Cualquier commit local cambia `HEAD`; cualquier rama nueva, el recuento."""
+    git_dir = ruta / ".git"
+    if not git_dir.is_dir():
+        raise CopiaAjena(f"{ruta} no tiene un .git propio; {_SALIDA}")
+    try:
+        marca = (git_dir / _MARCA).read_text(encoding="utf-8").strip()
+    except OSError:
+        raise CopiaAjena(f"{ruta} existe y no tiene la marca del enjambre (no la clonó él); {_SALIDA}") from None
+
+    trabajo = []
+    try:
+        estado = _git(["status", "--porcelain", "--ignored"], ruta, timeout_s)
+        ramas = _git(["for-each-ref", "--format=%(refname:short)", "refs/heads"], ruta, timeout_s).split()
+        cabeza = _commit(ruta, timeout_s)
+    except GitFallo as e:
+        raise CopiaAjena(f"{ruta} no se puede inspeccionar ({e}); {_SALIDA}") from e
+    if estado:
+        lineas = estado.splitlines()
+        trabajo.append("ficheros sin guardar o ignorados: " + ", ".join(l.strip() for l in lineas[:5]) + (" …" if len(lineas) > 5 else ""))
+    if len(ramas) != 1:
+        trabajo.append("ramas locales: " + (", ".join(ramas) or "ninguna"))
+    if cabeza != marca:
+        trabajo.append(f"commit local: HEAD {cabeza[:7]} y el enjambre dejó {marca[:7]}")
+    if trabajo:
+        raise CopiaAjena(f"la copia tiene trabajo local en {ruta}: {'; '.join(trabajo)}; {_SALIDA}")
+
+
 def _commit(ruta: Path, timeout_s: float) -> str:
     return _git(["rev-parse", "HEAD"], ruta, timeout_s)
 
@@ -202,12 +243,15 @@ def actualizar(
         copias.mkdir(parents=True, exist_ok=True)
         try:
             _git(["clone", "--depth", "1", "--", origen, str(ruta)], None, timeout_s)
-        except GitFallo:
+            commit = _commit(ruta, timeout_s)
+            _marcar(ruta, commit)
+        except (GitFallo, OSError):
             # `git clone` limpia lo suyo si falla, pero no si lo matamos por
-            # timeout. Aquí sabemos que el directorio no existía antes.
+            # timeout, y sin marca la copia sería "ajena" para siempre (D38).
+            # Aquí sabemos que el directorio no existía antes.
             shutil.rmtree(ruta, ignore_errors=True)
             raise
-        return ruta, _commit(ruta, timeout_s)
+        return ruta, commit
 
     # Existe: tiene que ser un repo propio (no un directorio dentro de otro
     # repo, donde `git` actuaría sobre el de arriba) y de esta misma URL.
@@ -223,11 +267,18 @@ def actualizar(
     if _canonico(origin) != _canonico(origen):
         raise CopiaAjena(f"{ruta} es una copia de {origin}, no de {origen}")
 
+    # D38: que la copia sea de esta URL no demuestra que sea desechable. Solo
+    # se toca una copia que el enjambre clonó (marca) y que nadie ha tocado.
+    _comprobar_intacta(ruta, timeout_s)
+
     # `fetch origin HEAD` (rama por defecto del remoto, D27) y no `origin
     # <rama>`: el clon `--depth 1` es de una sola rama, y si el remoto cambia
     # su rama por defecto, un fetch por la refspec guardada seguiría trayendo
     # la antigua.
     _git(["fetch", "--depth", "1", "origin", "HEAD"], ruta, timeout_s)
     _git(["reset", "--hard", "FETCH_HEAD"], ruta, timeout_s)
-    _git(["clean", "-fdx"], ruta, timeout_s)
-    return ruta, _commit(ruta, timeout_s)
+    # Sin `clean -fdx` (D27 lo tenía): la copia está intacta, no hay nada que
+    # limpiar, y cada comando destructivo de menos es una defensa más.
+    commit = _commit(ruta, timeout_s)
+    _marcar(ruta, commit)
+    return ruta, commit
