@@ -258,3 +258,60 @@ def test_ultimo_parado_filtra_por_modo(tmp_path):
         (d / "eventos.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lineas))
     assert ultimo_parado(s, F1, falso=False) == real
     assert ultimo_parado(s, F1, falso=True) is None  # la demo acabó: nada que continuar
+
+
+# --- D36: "Continuar" no lanza un run nuevo si el repo cambió ---
+
+async def test_d36_reanudar_con_commit_nuevo_y_si_cambio_error(e):
+    from enjambre.leer import RepoCambiado
+    parado = await leer(_f(e), lanzar=hacer_lanzar_falso(FALLA), run="r1", **_kw(e))
+    viejo = rev(e.repo)
+    repo_con_commit(e.repo, "b.py", "y = 2\n")
+    llamadas = []
+
+    async def lanzar(*a, **k):
+        llamadas.append(a)
+        raise AssertionError("no debía lanzarse nada")
+
+    with pytest.raises(RepoCambiado, match=rf"ha cambiado desde que se paró \({viejo[:7]} → {rev(e.repo)[:7]}\): lanza uno nuevo"):
+        await leer(_f(e), lanzar=lanzar, reanudar=parado.salida, si_cambio="error", run="r2", **_kw(e))
+    assert llamadas == [] and [d.name for d in (e.salidas / "proyecto").iterdir()] == ["r1"]
+
+
+async def test_d36_con_el_mismo_commit_si_cambio_error_si_continua(e):
+    parado = await leer(_f(e), lanzar=hacer_lanzar_falso(FALLA), run="r1", **_kw(e))
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), reanudar=parado.salida, si_cambio="error", **_kw(e))
+    assert l.continuado and l.motivo == "aprobado"
+
+
+async def test_d36_sin_commit_con_que_comparar_tambien_es_error(e):
+    # Fuente local sin git: no hay forma de saber si cambió, y "Continuar" no gasta a ciegas.
+    from enjambre.leer import RepoCambiado
+    sin_git = e.data / "suelto"
+    sin_git.mkdir()
+    f = resolver(str(sin_git), raiz_local=e.data, raiz_copias=e.copias)
+    parado = await leer(f, lanzar=hacer_lanzar_falso(FALLA), run="r1", **_kw(e))
+    with pytest.raises(RepoCambiado):
+        await leer(f, lanzar=hacer_lanzar_falso(), reanudar=parado.salida, si_cambio="error", **_kw(e))
+
+
+async def test_d36_la_cola_sigue_con_run_nuevo(e):
+    # Por defecto (`si_cambio="nuevo"`, lo que usa la cola, D30) no cambia nada: ya cubierto por
+    # `test_run_nuevo_si_el_commit_cambio`; aquí solo se fija que el valor por defecto es "nuevo".
+    import inspect
+    assert inspect.signature(leer).parameters["si_cambio"].default == "nuevo"
+
+
+async def test_d36_main_reanudar_devuelve_2_y_el_mensaje_va_a_stderr(e, monkeypatch, capsys):
+    import asyncio
+    import functools
+
+    import enjambre.leer as leer_mod
+    monkeypatch.setattr(leer_mod, "resolver", functools.partial(resolver, raiz_local=e.data, raiz_copias=e.copias))
+    parado = await leer(_f(e), lanzar=hacer_lanzar_falso(FALLA), run="r1", falso=True, **_kw(e))
+    repo_con_commit(e.repo, "b.py", "y = 2\n")
+    codigo = await asyncio.to_thread(
+        leer_mod.main, ["--reanudar", str(parado.salida), "--cerrojo", str(e.data.parent / "c.lock")])
+    err = capsys.readouterr().err
+    assert codigo == 2 and "ha cambiado desde que se paró" in err and "lanza uno nuevo" in err
+    assert [d.name for d in (e.salidas / "proyecto").iterdir()] == ["r1"]

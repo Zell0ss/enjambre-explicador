@@ -77,6 +77,12 @@ python -m enjambre.cola [--falso] [--techo-usd 10]
 Un solo run a la vez en la máquina (D31): el cerrojo es `cerrojo.lock`. El aviso lee
 `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` de `.env` (D34; fuera de git).
 
+**Las copias de `/data/github-abordaje/<dueño-repo en minúsculas>`** (D37) solo las toca el
+enjambre si las clonó él (marca `.git/enjambre`, D38) y siguen intactas: sin cambios ni ficheros
+nuevos, una sola rama y `HEAD` en el commit que dejó. Si no, `CopiaAjena`, sin tocar nada: borra la
+copia y se volverá a clonar. "Continuar" desde la página no lanza un run nuevo si el repo cambió
+desde que se paró (D36): sale con "el repo ha cambiado… lanza uno nuevo"; la cola, en cambio, sí.
+
 ### La noche: instalar el timer (lo hace Josem, requiere sudo)
 
 ```bash

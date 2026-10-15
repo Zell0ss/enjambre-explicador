@@ -17,12 +17,17 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from enjambre import aviso, cerrojo
 from enjambre.fuente import RAIZ_COPIAS, CopiaAjena, Fuente, FuenteInvalida, GitFallo, actualizar, resolver
 from enjambre.nota import FINALES, RAIZ_NOTAS, NotaAjena, comprobar, escribir, leer_frontmatter
 from enjambre.orquestar import orquestar, reanudar
 from enjambre.tipos import Lanzar, Lectura
+
+
+class RepoCambiado(ValueError):
+    """D36: se pidió continuar un run, pero el repo ya no está en el commit que ese run leyó."""
 
 
 def _eventos(salida: Path) -> list[dict]:
@@ -57,9 +62,16 @@ async def leer(
     raiz_notas: Path = RAIZ_NOTAS, tope_usd: float = 5.0, max_vueltas: int | None = 2,
     run: str | None = None, falso: bool = False, reanudar: Path | None = None,
     saltar_si_igual: bool = False, remoto: str | None = None, ahora=datetime.now,
+    si_cambio: Literal["nuevo", "error"] = "nuevo",
 ) -> Lectura:
     """`max_vueltas=None` solo tiene sentido al continuar: hereda el del run
-    parado (D24); en un run nuevo vale 2."""
+    parado (D24); en un run nuevo vale 2.
+
+    `si_cambio` (D36) decide qué pasa si se pide continuar (`reanudar`) y el
+    commit de ahora no es el del run: `"nuevo"` lanza un run nuevo (la cola,
+    D30: allí sí se pidió leer el repo) y `"error"` lanza `RepoCambiado` antes
+    de lanzar nada ("Continuar" promete seguir con lo ya pagado, no gastar en
+    un run entero que nadie pidió)."""
     # R3 (revisión de H2): un choque de nombre con una nota ajena se sabe ya, y
     # no hay que pagar un run entero para descubrirlo. Con `falso` la nota no va al vault.
     if not falso:
@@ -83,6 +95,9 @@ async def leer(
         # Con otro commit el código ha cambiado: lo que hay en disco habla de
         # una versión que ya no existe, así que no se continúa. Sin commit
         # (fuente local sin git) tampoco hay nada con qué compararlo.
+        if si_cambio == "error" and (commit is None or inicio.get("commit") != commit):
+            viejo, nuevo = (inicio.get("commit") or "?")[:7], (commit or "?")[:7]
+            raise RepoCambiado(f"el repo ha cambiado desde que se paró ({viejo} → {nuevo}): lanza uno nuevo")
         if commit is not None and inicio.get("commit") == commit:
             fin = await _reanudar(reanudar, lanzar, tope_usd, max_vueltas)
             coste = round(fin["coste_total_usd"] - _coste_previo(reanudar), 6)
@@ -222,6 +237,8 @@ async def _main_async(args) -> int:
         f, salidas=args.salidas, lanzar=_elegir_lanzar(falso), tope_usd=args.tope_usd,
         max_vueltas=args.max_vueltas,
         run=args.run, falso=falso, reanudar=args.reanudar,
+        # D36: "Continuar" (la página) no lanza un run nuevo si el repo cambió.
+        si_cambio="error" if args.reanudar else "nuevo",
     )
     print(f"{lectura.run} {lectura.motivo} {lectura.vueltas} {lectura.coste_usd} {lectura.salida}")
     mensaje = aviso.texto_run(lectura)

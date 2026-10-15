@@ -1264,6 +1264,13 @@ function _arrancarDirecto(repo, run) {
     return false;
   };
 
+  // D36: una continuación que sale con error (p. ej. "el repo ha cambiado")
+  // no deja ningún evento: el directo seguiría mostrando solo el `run_fin`
+  // viejo. Mientras esté abierto se pregunta al lanzador cada 2 s.
+  const vigilanteId = setInterval(async () => {
+    if (await explicarMuerte()) clearInterval(vigilanteId);
+  }, 2000);
+
   es.onmessage = (ev) => {
     recibioAlgo = true;
     let evento;
@@ -1306,6 +1313,7 @@ function _arrancarDirecto(repo, run) {
       // todo el fichero para nada; `clearInterval` para el repintado
       // periódico, que ya no tiene nada nuevo que mostrar.
       clearInterval(tickId);
+      clearInterval(vigilanteId);
       es.close();
       return;
     }

@@ -607,3 +607,31 @@ def test_el_hijo_toma_el_mismo_cerrojo_que_mira_el_servidor(fase3):
     _run_parado(fase3.salidas, fase3.raiz / "agora")
     _post(fase3.base + "/api/reanudar", {"repo": "agora", "run": "agora-1", "tope_usd": 2, "max_vueltas": 2})
     assert fase3.vistos[-1][fase3.vistos[-1].index("--cerrojo") + 1] == str(fase3.cerrojo)
+
+
+def _hijo_que_crea_el_run_y_sale(codigo: int) -> str:
+    return (
+        "import sys, json, pathlib\n"
+        "salidas, run = pathlib.Path(sys.argv[2]), sys.argv[3]\n"
+        "d = salidas / 'proyecto' / run; d.mkdir(parents=True)\n"
+        "(d / 'eventos.jsonl').write_text(json.dumps({'t': 'x', 'run': run, 'tipo': 'run_inicio'}) + '\\n')\n"
+        "print('RepoCambiado: el repo ha cambiado desde que se paró (abc1234 → def5678): lanza uno nuevo', file=sys.stderr)\n"
+        f"sys.exit({codigo})\n"
+    )
+
+
+@pytest.mark.parametrize("codigo,con_error", [(2, True), (1, False), (0, False), (130, False)])
+def test_d36_lanzador_da_el_error_aunque_el_run_exista(fase3, codigo, con_error):
+    # D36 (c): un proceso que sale con un código que no es de run normal (0, 1, 130) cuenta
+    # su error aunque el run exista -- "Continuar" con el repo cambiado no deja ni un evento nuevo.
+    codigo_hijo = _hijo_que_crea_el_run_y_sale(codigo)
+    fase3.server.comando = lambda args: [sys.executable, "-c", codigo_hijo, "x",
+                                         str(fase3.salidas), args[args.index("--run") + 1]]
+    _, r = _post(fase3.base + "/api/lanzar",
+                 {"repo": "https://github.com/x/proyecto", "tope_usd": 1, "max_vueltas": 0, "falso": True})
+    estado = _esperar_fin(fase3.base)
+    if con_error:
+        assert estado == {"en_marcha": False, "repo": "proyecto", "run": r["run"], "codigo": 2,
+                          "error": "RepoCambiado: el repo ha cambiado desde que se paró (abc1234 → def5678): lanza uno nuevo"}
+    else:
+        assert estado == {"en_marcha": False, "repo": None, "run": None}

@@ -537,10 +537,14 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         if proc is not None and not en_marcha:
             repo, run = self.server.proc_repo, self.server.proc_run  # type: ignore[attr-defined]
             run_dir = _resuelve_dentro(self.server.salidas, f"{repo}/{run}")  # type: ignore[attr-defined]
-            if run_dir is None or not (run_dir / "eventos.jsonl").is_file():
-                # D33: el proceso murió antes de crear el run (repo privado o
-                # inexistente, copia ajena, cerrojo ocupado...). Sin esto la
-                # página esperaría un directo que nunca llega.
+            sin_run = run_dir is None or not (run_dir / "eventos.jsonl").is_file()
+            # D33: el proceso murió antes de crear el run (repo privado o
+            # inexistente, copia ajena, cerrojo ocupado...): sin esto la página
+            # esperaría un directo que nunca llega. D36: y también si el run
+            # existe pero el proceso salió con un código que no es de run
+            # normal (0 aprobado, 1 parado, 130 interrumpido): p. ej. 2 =
+            # "el repo ha cambiado" al continuar, que no deja ni un evento.
+            if sin_run or proc.returncode not in (0, 1, 130):
                 cuerpo.update(
                     repo=repo,
                     run=run,
