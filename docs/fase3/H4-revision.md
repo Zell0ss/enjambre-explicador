@@ -68,8 +68,8 @@ Registradas como **D36** y **D37** en el diseño (D26 queda revisada por D37). L
   no cambian: un directorio de `/data` se queda como está.
 - **Cambio de la prueba normativa** (lo decide el arquitecto, así que puedes aplicarlo):
   en `tests/test_fuente.py`, `CANON = "https://github.com/henrik-thevibe/claude-fables"` y
-  `f.nombre == "claude-fables"`. La lista de `test_url_se_normaliza` no cambia (sigue escribiendo
-  `Claude-Fables` en las entradas) y se añade la entrada `"https://github.com/Henrik-TheVibe/CLAUDE-FABLES"`.
+  `f.nombre == "claude-fables"`. Las entradas de `test_url_se_normaliza` que escriben `Claude-Fables` a mano se
+  quedan, y se añade la entrada `"https://github.com/Henrik-TheVibe/CLAUDE-FABLES"`.
   El arquitecto aplica el mismo cambio en el plan.
 - El arreglo de mayúsculas de `encolar` (`4dc8843`) sobra. Puedes dejarlo: no estorba.
 - `/data/github-abordaje/Claude-Fables` queda huérfana. **No la borres tú:** es de Josem.
