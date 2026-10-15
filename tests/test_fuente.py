@@ -3,7 +3,7 @@ import pytest
 from enjambre.fuente import CopiaAjena, FuenteInvalida, GitFallo, actualizar, resolver
 from tests.gitutil import git, repo_con_commit, rev
 
-CANON = "https://github.com/henrik-thevibe/Claude-Fables"
+CANON = "https://github.com/henrik-thevibe/claude-fables"
 
 
 @pytest.mark.parametrize("texto", [
@@ -14,10 +14,11 @@ CANON = "https://github.com/henrik-thevibe/Claude-Fables"
     "http://github.com/henrik-thevibe/Claude-Fables",
     "https://www.github.com/henrik-thevibe/Claude-Fables",
     "  " + CANON + "  ",
+    "https://github.com/Henrik-TheVibe/CLAUDE-FABLES",
 ])
 def test_url_se_normaliza(texto):
     f = resolver(texto)
-    assert f.texto == CANON and f.url == CANON and f.nombre == "Claude-Fables"
+    assert f.texto == CANON and f.url == CANON and f.nombre == "claude-fables"
 
 
 @pytest.mark.parametrize("texto", [

@@ -66,13 +66,13 @@ def _resolver_url(texto: str) -> Fuente:
     trozos = [t for t in partes.path.split("/") if t]
     if len(trozos) < 2:
         raise FuenteInvalida(f"falta el dueño o el repo en la URL: {texto!r}")
-    dueno, repo = trozos[0], trozos[1]
-    repo = repo.removesuffix(".git")
+    # D37: la identidad de un repo de GitHub va en minúsculas (dueño Y repo).
+    # GitHub no distingue mayúsculas, y con ellas un mismo repo tendría dos
+    # copias en disco y dos notas. Se pasa a minúsculas ANTES de quitar `.git`.
+    dueno, repo = trozos[0].lower(), trozos[1].lower().removesuffix(".git")
     if not _nombre_valido(dueno) or not _nombre_valido(repo):
         raise FuenteInvalida(f"dueño o repo con caracteres no válidos: {texto!r}")
-    # GitHub no distingue mayúsculas en el dueño: se normaliza para que dos
-    # escrituras de la misma URL no se vean como orígenes distintos (D27).
-    canon = f"https://github.com/{dueno.lower()}/{repo}"
+    canon = f"https://github.com/{dueno}/{repo}"
     return Fuente(texto=canon, nombre=repo, url=canon)
 
 

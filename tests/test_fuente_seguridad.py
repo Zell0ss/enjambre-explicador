@@ -33,8 +33,18 @@ def test_url_con_usuario_o_puerto_no_es_github():
             resolver(t)
 
 
-def test_duenio_en_mayusculas_se_normaliza():
-    assert resolver("https://github.com/Henrik-TheVibe/Claude-Fables").texto == "https://github.com/henrik-thevibe/Claude-Fables"
+def test_duenio_y_repo_en_mayusculas_se_normalizan():
+    # D37 (antes, el repo conservaba sus mayúsculas): la identidad va en minúsculas.
+    f = resolver("https://github.com/Henrik-TheVibe/Claude-Fables.GIT")
+    assert f.texto == "https://github.com/henrik-thevibe/claude-fables" and f.nombre == "claude-fables"
+
+
+def test_ruta_local_conserva_sus_mayusculas(tmp_path):
+    # D37: solo los repos de GitHub; un directorio de /data se queda como está.
+    d = tmp_path / "MiProyecto"
+    d.mkdir()
+    f = resolver(str(d), raiz_local=tmp_path, raiz_copias=tmp_path / "copias")
+    assert f.nombre == "MiProyecto" and f.texto == str(d.resolve())
 
 
 def test_symlink_hacia_fuera_no_se_toca(remoto, tmp_path):
