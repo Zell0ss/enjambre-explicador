@@ -2,12 +2,12 @@
 
 ## Estado
 
-Fase 3 (abordaje) **construida y fusionada en `main`** (H1-H4b, D26-D38). Falta solo la **aceptación (H5), que lanza Josem**.
+Fase 3 (abordaje) **construida y fusionada en `main`** (H1-H4b, D26-D39; D39 = la noche espera al reset del límite de sesión, fusionada 2026-10-16). Falta solo la **aceptación (H5), que lanza Josem**.
 Lo hecho está en los informes `docs/fase3/H*-informe.md` y en los commits; las decisiones, en el diseño del vault (D26-D38).
 
 ## Siguiente
 
-- **H5 (Josem):** encolar `https://github.com/shaven/golden-thread` desde la página (un solo repo: dos "comen tokens a lo burro").
+- **H5 (Josem):** `https://github.com/shaven/golden-thread` ya está en la cola (la noche del 16 paró por el límite de sesión a las 02:39, con el reset a las 02:40, antes de D39). La del 17 lo continúa y, si vuelve a chocar con el límite, espera al reset (una vez, hasta las 07:00).
   El timer corre a las 02:30; o `sudo systemctl start enjambre-cola.service` para verlo ya. Se acepta con: nota en
   `Clippings/repo-articles/golden-thread.md` (`generado_por: enjambre`), Telegram de La borracha, repetición en la pantalla y
   noche ≤ 10 $. Si se para por límite de uso, la noche siguiente continúa (D30).
