@@ -40,6 +40,7 @@ python -m enjambre.pantalla
 - **Las pruebas no tocan la red, la API, el vault, `/data/github-abordaje`, `cola/`, `cerrojo.lock` ni `.env`.** Los "remotos" son repos *bare* locales (`file://`, `tests/gitutil.py`).
 - **`.env`** (Telegram, D34) lo crea Josem y nunca se lee ni se commitea.
 - **Este directorio arranca un servicio (el timer de la noche): se queda en `main` y limpio.** Para trabajar, `git worktree add ../enjambre-explicador-<rama> -b feature/<rama>` con `.venv` propio. Fusiona Josem con `--ff-only`.
+- **La noche espera al reset del límite de sesión (D39):** si una lectura para por `session limit` y el aviso trae la hora (`leer.reset_de_limite` → `Lectura.reintentar_a`), `cola.noche` duerme hasta esa hora + 1 min y reintenta la misma petición, **una vez por noche** y solo si acaba antes de las 07:00. El cerrojo se mantiene durante la espera.
 - Un `--falso` nunca escribe en el vault (la nota va a `<salida>/nota.md`) ni cuenta para saltar o continuar un run real (D35, R4).
 
 ## Reglas

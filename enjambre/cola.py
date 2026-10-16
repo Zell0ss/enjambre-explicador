@@ -15,7 +15,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from enjambre import aviso, cerrojo
@@ -94,29 +94,38 @@ def _mover(ruta: Path, destino: Path) -> None:
 
 async def noche(
     *, raiz_cola: Path, leer_fn, techo_usd: float = 10.0, tope_run_usd: float = 5.0,
-    minimo_usd: float = 1.0, max_intentos: int = 3, ahora=datetime.now,
+    minimo_usd: float = 1.0, max_intentos: int = 3, hasta: time = time(7, 0),
+    dormir=asyncio.sleep, ahora=datetime.now,
 ) -> dict:
     """`leer_fn(fuente_texto, tope_usd) -> Lectura` (async). Devuelve
-    `{"lecturas", "errores", "gastado_usd", "quedan", "parada"}`."""
+    `{"lecturas", "errores", "gastado_usd", "quedan", "parada", "esperado_a"}`.
+
+    D39: si una lectura para por el límite de sesión y su aviso dice cuándo se
+    renueva (`Lectura.reintentar_a`), la cola espera a esa hora más un minuto y
+    vuelve a leer la misma petición (que continúa el run, D24). Una sola vez por
+    noche, y solo si la espera acaba antes de `hasta` (la mañana de Josem). La
+    segunda lectura no suma otro intento: el de esa noche cubre las dos."""
     lecturas, errores, gastado, parada = [], [], 0.0, None
+    esperado_a: datetime | None = None
+    inicio = ahora()
+    limite = datetime.combine(inicio.date(), hasta)
+    if limite <= inicio:
+        limite += timedelta(days=1)
 
-    for ruta, pet in _listar(raiz_cola / "pendientes"):
-        disponible = techo_usd - gastado
-        if disponible < minimo_usd:
-            parada = "techo"
-            break
-
+    async def intentar(pet: dict, tope: float):
+        """Una llamada a `leer_fn`: devuelve `(lectura | None, parada | None, hecha)` y apunta
+        su entrada en `historial` y en `errores`/`lecturas`."""
+        nonlocal gastado
         intento = {"t": f"{ahora():%Y-%m-%dT%H:%M:%S}"}
-        pet["intentos"] = pet.get("intentos", 0) + 1
-        hecha = False
+        l, para, hecha = None, None, False
         try:
-            l = await leer_fn(pet["fuente"], min(tope_run_usd, disponible))
+            l = await leer_fn(pet["fuente"], tope)
         except Exception as e:  # noqa: BLE001
             error = f"{type(e).__name__}: {e}"
             errores.append((pet["fuente"], error))
             intento.update(error=error, coste_usd=0.0, run=None)
             if not isinstance(e, _DEL_REPO):
-                parada = f"excepcion:{type(e).__name__}"
+                para = f"excepcion:{type(e).__name__}"
                 obtener_log().exception(f"cola: excepción no prevista leyendo {pet['fuente']}")
         else:
             # Foco 4: `l.coste_usd` es lo de esta lectura, no lo de la continuación entera.
@@ -127,8 +136,26 @@ async def noche(
             # El límite de uso de la suscripción es lo más probable detrás de un
             # fallo o una interrupción: seguir solo gastaría intentos.
             if not hecha and (l.motivo.startswith(("fallo:", "excepcion:")) or l.motivo == "interrumpido"):
-                parada = l.motivo
+                para = l.motivo
         pet.setdefault("historial", []).append(intento)
+        return l, para, hecha
+
+    for ruta, pet in _listar(raiz_cola / "pendientes"):
+        disponible = techo_usd - gastado
+        if disponible < minimo_usd:
+            parada = "techo"
+            break
+
+        pet["intentos"] = pet.get("intentos", 0) + 1
+        l, parada, hecha = await intentar(pet, min(tope_run_usd, disponible))
+
+        reintentar_a = getattr(l, "reintentar_a", None)
+        if (parada and l is not None and reintentar_a is not None and esperado_a is None
+                and reintentar_a + timedelta(seconds=60) < limite
+                and techo_usd - gastado >= minimo_usd):
+            esperado_a = reintentar_a
+            await dormir(max(0.0, (reintentar_a + timedelta(seconds=60) - ahora()).total_seconds()))
+            l, parada, hecha = await intentar(pet, min(tope_run_usd, techo_usd - gastado))
 
         _escribir(ruta, pet)
         if hecha:
@@ -139,7 +166,7 @@ async def noche(
             break
 
     return {"lecturas": lecturas, "errores": errores, "gastado_usd": round(gastado, 6),
-            "quedan": len(pendientes(raiz_cola)), "parada": parada}
+            "quedan": len(pendientes(raiz_cola)), "parada": parada, "esperado_a": esperado_a}
 
 
 def _crear_analizador() -> argparse.ArgumentParser:

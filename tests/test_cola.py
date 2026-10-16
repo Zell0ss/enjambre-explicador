@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -176,3 +177,112 @@ def test_encolar_no_distingue_mayusculas(tmp_path):
     p1, nuevo1 = encolar("https://github.com/x/Proyecto", raiz_cola=tmp_path)
     p2, nuevo2 = encolar("https://github.com/X/proyecto", raiz_cola=tmp_path)
     assert nuevo1 and not nuevo2 and p1 == p2
+
+
+# --- D39 (anexo 2026-10-16, Tarea 27): normativas, tal cual ---
+from datetime import datetime, timedelta
+
+
+def _l(fuente, motivo, coste, reintentar_a=None):
+    l = _lectura(fuente, motivo, coste)
+    l.reintentar_a = reintentar_a
+    return l
+
+
+def _secuencia(respuestas, llamadas):
+    async def f(fuente, tope_usd):
+        llamadas.append((fuente, tope_usd))
+        return respuestas.pop(0)
+    return f
+
+
+INICIO = datetime(2026, 10, 16, 2, 30)
+
+
+async def test_espera_al_reset_y_sigue(tmp_path):
+    _encola(tmp_path, A)
+    dormidos, llamadas = [], []
+    async def dormir(s): dormidos.append(s)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 2.74, datetime(2026, 10, 16, 2, 40)),
+                                        _l(A, "aprobado", 1.0)], llamadas))
+    assert [f for f, _ in llamadas] == [A, A] and llamadas[1][1] == 5.0
+    assert len(dormidos) == 1 and dormidos[0] >= 60
+    assert r["parada"] is None and pendientes(tmp_path) == []
+    [hecha] = [json.loads(p.read_text()) for p in (tmp_path / "hechas").iterdir()]
+    assert hecha["intentos"] == 1 and len(hecha["historial"]) == 2
+
+
+async def test_no_espera_si_el_reset_es_despues_de_las_7(tmp_path):
+    _encola(tmp_path, A, B)
+    dormidos, llamadas = [], []
+    async def dormir(s): dormidos.append(s)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 1.0, datetime(2026, 10, 16, 7, 30))], llamadas))
+    assert dormidos == [] and [f for f, _ in llamadas] == [A] and r["parada"] == "fallo:trazador:error"
+
+
+async def test_solo_una_espera_por_noche(tmp_path):
+    _encola(tmp_path, A)
+    dormidos, llamadas = [], []
+    async def dormir(s): dormidos.append(s)
+    reset = datetime(2026, 10, 16, 2, 40)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 1.0, reset),
+                                        _l(A, "fallo:redactor:error", 0.5, reset + timedelta(hours=1))], llamadas))
+    assert len(dormidos) == 1 and len(llamadas) == 2 and r["parada"] == "fallo:redactor:error"
+    [pend] = pendientes(tmp_path)
+    assert pend["intentos"] == 1 and len(pend["historial"]) == 2
+
+
+async def test_sin_reintentar_a_no_espera(tmp_path):
+    _encola(tmp_path, A)
+    dormidos = []
+    async def dormir(s): dormidos.append(s)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 1.0)], []))
+    assert dormidos == [] and r["parada"] == "fallo:trazador:error"
+
+
+# --- añadidas (no normativas) ---
+
+async def test_la_espera_no_se_hace_si_ya_no_queda_techo(tmp_path):
+    # Esperar para poder gastar menos de `minimo_usd` no tiene sentido.
+    _encola(tmp_path, A)
+    dormidos = []
+    async def dormir(s): dormidos.append(s)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir, techo_usd=3.0, tope_run_usd=3.0,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 2.5, datetime(2026, 10, 16, 2, 40))], []))
+    assert dormidos == [] and r["parada"] == "fallo:trazador:error"
+
+
+async def test_el_resumen_dice_a_que_hora_se_espero(tmp_path):
+    from enjambre.aviso import texto_noche
+    _encola(tmp_path, A)
+    async def dormir(s): pass
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_secuencia([_l(A, "fallo:trazador:error", 2.0, datetime(2026, 10, 16, 2, 40)),
+                                        _l(A, "aprobado", 1.0)], []))
+    assert r["esperado_a"] == datetime(2026, 10, 16, 2, 40)
+    assert "esperé al reset de las 02:40" in texto_noche(r).lower()
+
+
+async def test_una_excepcion_no_espera(tmp_path):
+    _encola(tmp_path, A)
+    dormidos = []
+    async def dormir(s): dormidos.append(s)
+    r = await noche(raiz_cola=tmp_path, ahora=lambda: INICIO, dormir=dormir,
+                    leer_fn=_leer_fn({A: RuntimeError("SDK roto")}, []))
+    assert dormidos == [] and r["parada"] == "excepcion:RuntimeError"
+
+
+async def test_la_noche_que_empieza_despues_de_las_7_cuenta_la_del_dia_siguiente(tmp_path):
+    # Una noche que arranca a las 23:00: el límite es las 07:00 de MAÑANA, no las de hoy (ya pasadas).
+    _encola(tmp_path, A)
+    dormidos = []
+    async def dormir(s): dormidos.append(s)
+    ahora = datetime(2026, 10, 16, 23, 0)
+    await noche(raiz_cola=tmp_path, ahora=lambda: ahora, dormir=dormir,
+                leer_fn=_secuencia([_l(A, "fallo:trazador:error", 1.0, datetime(2026, 10, 17, 1, 0)),
+                                    _l(A, "aprobado", 1.0)], []))
+    assert len(dormidos) == 1

@@ -14,8 +14,9 @@ para todo lo que lean (D31).
 import argparse
 import asyncio
 import json
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +29,43 @@ from enjambre.tipos import Lanzar, Lectura
 
 class RepoCambiado(ValueError):
     """D36: se pidió continuar un run, pero el repo ya no está en el commit que ese run leyó."""
+
+
+# «You've hit your session limit · resets 2:40am (Europe/Madrid)». La CLI da la
+# hora en la zona de seb01, que es la del reloj local: no se convierte nada.
+_RESET = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
+
+
+def reset_de_limite(salida: Path) -> datetime | None:
+    """D39: cuándo se renueva el límite de sesión del último tramo de `salida`.
+
+    Mira los eventos posteriores al último `run_inicio` o `reanudado` (lo de un
+    tramo anterior ya se resolvió) y toma el último `aviso` con `session limit`
+    y `resets <h>[:<mm>]am|pm`. Devuelve la **siguiente** vez que llega esa hora
+    de reloj contada desde el `t` de ese aviso, o `None` si no hay aviso así."""
+    try:
+        eventos = _eventos(salida)
+    except (OSError, ValueError):
+        return None
+    desde = max((i for i, e in enumerate(eventos) if e.get("tipo") in ("run_inicio", "reanudado")), default=-1)
+    for e in reversed(eventos[desde + 1:]):
+        texto = e.get("texto") or ""
+        if e.get("tipo") != "aviso" or "session limit" not in texto:
+            continue
+        m = _RESET.search(texto)
+        if not m:
+            continue
+        hora, minuto, ampm = int(m.group(1)), int(m.group(2) or 0), m.group(3).lower()
+        if not (1 <= hora <= 12 and 0 <= minuto <= 59):
+            continue
+        hora = hora % 12 + (12 if ampm == "pm" else 0)
+        try:
+            t = datetime.fromisoformat(e["t"])
+        except (KeyError, ValueError):
+            continue
+        reset = t.replace(hour=hora, minute=minuto, second=0, microsecond=0)
+        return reset if reset >= t else reset + timedelta(days=1)
+    return None
 
 
 def _eventos(salida: Path) -> list[dict]:
@@ -106,7 +144,8 @@ async def leer(
                                   raiz_notas=raiz_notas, ahora=ahora)
             return Lectura(fuente=f.texto, nombre=f.nombre, commit=commit, run=fin["run"],
                            salida=reanudar, motivo=fin["motivo"], vueltas=fin["vueltas"],
-                           coste_usd=coste, nota=nota, continuado=True)
+                           coste_usd=coste, nota=nota, continuado=True,
+                           reintentar_a=_reintentar_a(reanudar, fin["motivo"]))
 
     fin = await orquestar(
         ruta, salidas, lanzar, tope_usd=tope_usd, max_vueltas=2 if max_vueltas is None else max_vueltas,
@@ -116,7 +155,13 @@ async def leer(
     coste = fin["coste_total_usd"]
     nota = _escribir_nota(f, commit, salida, fin, coste, falso=falso, raiz_notas=raiz_notas, ahora=ahora)
     return Lectura(fuente=f.texto, nombre=f.nombre, commit=commit, run=fin["run"], salida=salida,
-                   motivo=fin["motivo"], vueltas=fin["vueltas"], coste_usd=coste, nota=nota)
+                   motivo=fin["motivo"], vueltas=fin["vueltas"], coste_usd=coste, nota=nota,
+                   reintentar_a=_reintentar_a(salida, fin["motivo"]))
+
+
+def _reintentar_a(salida: Path, motivo: str) -> datetime | None:
+    """D39: solo un run que paró (no uno acabado) tiene algo que reintentar."""
+    return None if motivo in FINALES else reset_de_limite(salida)
 
 
 async def _reanudar(salida: Path, lanzar: Lanzar, tope_usd: float, max_vueltas: int | None) -> dict:

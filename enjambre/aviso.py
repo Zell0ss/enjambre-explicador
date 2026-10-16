@@ -102,6 +102,8 @@ def texto_noche(resumen: dict) -> str:
             lineas.append(f"· {l.nombre}: parado ({l.motivo}), {l.coste_usd:.2f} $")
     for fuente, error in resumen["errores"]:
         lineas.append(f"✗ {fuente}: {error}")
+    if resumen.get("esperado_a"):
+        lineas.append(f"Esperé al reset de las {resumen['esperado_a']:%H:%M} (límite de sesión)")
     lineas.append(f"Gastado: {resumen['gastado_usd']:.2f} $")
     if resumen["parada"]:
         lineas.append(f"La noche paró: {resumen['parada']}")

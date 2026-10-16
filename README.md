@@ -83,6 +83,8 @@ nuevos, una sola rama y `HEAD` en el commit que dejó. Si no, `CopiaAjena`, sin 
 copia y se volverá a clonar. "Continuar" desde la página no lanza un run nuevo si el repo cambió
 desde que se paró (D36): sale con "el repo ha cambiado… lanza uno nuevo"; la cola, en cambio, sí.
 
+Si una lectura de la noche para por el límite de sesión de Claude y el aviso dice cuándo se renueva (`resets 2:40am`), la cola espera a esa hora más un minuto y continúa el mismo run (D39): una sola vez por noche y solo si acaba antes de las 07:00. Durante la espera sigue teniendo el cerrojo, así que no se puede lanzar nada desde la página; el Telegram de la mañana lo cuenta («Esperé al reset de las 02:40»).
+
 ### La noche: instalar el timer (lo hace Josem, requiere sudo)
 
 ```bash

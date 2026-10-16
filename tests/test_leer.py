@@ -315,3 +315,82 @@ async def test_d36_main_reanudar_devuelve_2_y_el_mensaje_va_a_stderr(e, monkeypa
     err = capsys.readouterr().err
     assert codigo == 2 and "ha cambiado desde que se paró" in err and "lanza uno nuevo" in err
     assert [d.name for d in (e.salidas / "proyecto").iterdir()] == ["r1"]
+
+
+# --- D39 (anexo 2026-10-16, Tarea 27): normativas, tal cual ---
+import json
+from datetime import datetime
+
+from enjambre.leer import reset_de_limite
+
+AVISO = "ResultError: Claude Code returned an error result: You've hit your session limit · resets {h} (Europe/Madrid) (exit code: 1)"
+
+
+def _salida(tmp_path, *eventos):
+    d = tmp_path / "run"
+    d.mkdir()
+    (d / "eventos.jsonl").write_text("".join(json.dumps(e) + "\n" for e in eventos))
+    return d
+
+
+def _aviso(t, h):
+    return {"t": t, "tipo": "aviso", "agente": "trazador", "texto": AVISO.format(h=h)}
+
+
+@pytest.mark.parametrize("t, h, esperado", [
+    ("2026-10-16T02:39:42.498", "2:40am", datetime(2026, 10, 16, 2, 40)),
+    ("2026-10-15T22:10:00.000", "11pm", datetime(2026, 10, 15, 23, 0)),
+    ("2026-10-15T23:50:00.000", "1:15am", datetime(2026, 10, 16, 1, 15)),
+    ("2026-10-16T12:30:00.000", "12:45pm", datetime(2026, 10, 16, 12, 45)),
+])
+def test_reset_de_limite(tmp_path, t, h, esperado):
+    s = _salida(tmp_path, {"t": "2026-10-15T00:00:00", "tipo": "run_inicio"}, _aviso(t, h))
+    assert reset_de_limite(s) == esperado
+
+
+def test_sin_aviso_de_limite(tmp_path):
+    s = _salida(tmp_path, {"t": "2026-10-16T02:30:00", "tipo": "run_inicio"},
+                {"t": "2026-10-16T02:31:00", "tipo": "aviso", "texto": "otra cosa"})
+    assert reset_de_limite(s) is None
+
+
+def test_aviso_de_un_tramo_anterior_no_cuenta(tmp_path):
+    s = _salida(tmp_path, {"t": "2026-10-15T22:00:00", "tipo": "run_inicio"},
+                _aviso("2026-10-15T22:30:00", "11pm"),
+                {"t": "2026-10-16T02:30:00", "tipo": "reanudado"})
+    assert reset_de_limite(s) is None
+
+
+# --- añadidas (no normativas) ---
+
+def test_reset_con_texto_raro_no_rompe(tmp_path):
+    s = _salida(tmp_path, {"t": "2026-10-16T02:30:00", "tipo": "run_inicio"},
+                {"t": "2026-10-16T02:31:00", "tipo": "aviso", "texto": "session limit · resets mañana"},
+                {"t": "2026-10-16T02:31:30", "tipo": "aviso", "texto": "session limit · resets 13pm"})
+    assert reset_de_limite(s) is None
+
+
+def test_reset_toma_el_ultimo_aviso_del_tramo(tmp_path):
+    s = _salida(tmp_path, {"t": "2026-10-16T01:00:00", "tipo": "run_inicio"},
+                _aviso("2026-10-16T01:10:00", "2am"), _aviso("2026-10-16T02:39:00", "2:40am"))
+    assert reset_de_limite(s) == datetime(2026, 10, 16, 2, 40)
+
+
+async def test_leer_rellena_reintentar_a_si_el_run_para_por_el_limite(e):
+    base = hacer_lanzar_falso({"despiezador": [Resultado(estado_final="error")]})
+
+    async def con_aviso(agente, instancia, encargo, ctx):
+        r = await base(agente, instancia, encargo, ctx)
+        if instancia == "despiezador":
+            ctx.eventos.emitir("aviso", instancia,
+                               texto=AVISO.format(h="2:40am"))
+        return r
+
+    l = await leer(_f(e), lanzar=con_aviso, run="r1", **_kw(e))
+    assert l.motivo.startswith("fallo:") and l.reintentar_a is not None
+    assert (l.reintentar_a.hour, l.reintentar_a.minute) == (2, 40)
+
+
+async def test_leer_no_pone_reintentar_a_si_acaba(e):
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", **_kw(e))
+    assert l.reintentar_a is None
