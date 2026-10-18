@@ -39,6 +39,8 @@ python -m enjambre.pantalla
 - **Valores por defecto de ruta, nunca en la firma:** `def f(ruta=None)` y `ruta or RUTA` dentro (si no, las pruebas no pueden redirigirlos). `tests/conftest.py` redirige el cerrojo a `tmp_path`.
 - **Las pruebas no tocan la red, la API, el vault, `/data/github-abordaje`, `cola/`, `cerrojo.lock` ni `.env`.** Los "remotos" son repos *bare* locales (`file://`, `tests/gitutil.py`).
 - **`.env`** (Telegram, D34) lo crea Josem y nunca se lee ni se commitea.
+- **Valores de seb01: en `.env`, nunca en el código (D44).** Rutas del vault y de las copias, la raíz local y la IP de la pantalla salen de `enjambre/config.py` (entorno > `.env` > valor por defecto genérico), resuelto **al llamar**, no al importar ni en una firma. `tests/test_config.py::test_sin_codigo_de_seb01` falla si aparece `/data/`, `100.87.` o `mi-wiki` en `enjambre/` o `pantalla/`. `.env.example` documenta las variables. LogCentral es opcional: sin él, `logging` escribe en `logs/enjambre.log`; `requirements-seb01.txt` lo instala.
+- **Las pruebas no llegan al vault, a las copias ni al `.env` reales aunque se olvide pasar una ruta:** `tests/conftest.py` (autouse) redirige `config.RUTA_ENV` y pone `ENJAMBRE_NOTAS`/`ENJAMBRE_COPIAS` en `tmp_path`.
 - **Este directorio arranca un servicio (el timer de la noche): se queda en `main` y limpio.** Para trabajar, `git worktree add ../enjambre-explicador-<rama> -b feature/<rama>` con `.venv` propio. Fusiona Josem con `--ff-only`.
 - **La noche espera al reset del límite de sesión (D39):** si una lectura para por `session limit` y el aviso trae la hora (`leer.reset_de_limite` → `Lectura.reintentar_a`), `cola.noche` duerme hasta esa hora + 1 min y reintenta la misma petición, **una vez por noche** y solo si acaba antes de las 07:00. El cerrojo se mantiene durante la espera.
 - **`peso.py` solo informa (D40):** cuenta lo que sigue git (`fuente.ficheros`) y estima una banda de coste; no decide nada. Una URL se pesa en un temporal (`fuente.clonar`), nunca en `RAIZ_COPIAS`. `python -m enjambre.peso <fuente>`; en la página, «Pesar»; en `run_inicio.peso`.
@@ -54,7 +56,7 @@ python -m enjambre.pantalla
 - **Solo `enjambre/lanzador.py` importa `claude_agent_sdk`** (D6).
 
 **Periféricos (prohibido modificar):**
-- **No tocar `.claude/agents/*.md`** — son symlinks al vault, cuidados por Josem y el arquitecto. 
+- **Un prompt de `.claude/agents/` se cambia solo cuando lo pide un plan o Josem** (D43): son ficheros del repo, el original; en el vault hay copias de lectura (`python -m enjambre.agentes --copiar-a <carpeta>`, lo lanza el arquitecto).
 - **No tocar el vault de Obsidian** (lo lleva el arquitecto).
 - **No tocar `/data/logcentral/`** (lo hace Josem, ver Tarea 1).
 
@@ -62,7 +64,7 @@ python -m enjambre.pantalla
 - **Las pruebas no llaman a la API.** Nada en `pytest` gasta tokens. Llamadas reales solo en pasos marcados [API] con modelo indicado.
 
 **Pantalla:**
-- Escucha por defecto en `100.87.64.121:8790` (Tailscale seb01), nunca `0.0.0.0`. No importa el orquestador ni el SDK: lanza `enjambre.leer` como subproceso (D21, D33).
+- Escucha en `ENJAMBRE_HOST`:`ENJAMBRE_PUERTO` (por defecto `127.0.0.1:8790`), nunca `0.0.0.0` ni `::` (D12; `config.host()` lo rechaza). En seb01 el `.env` pone la IP de Tailscale. No importa el orquestador ni el SDK: lanza `enjambre.leer` como subproceso (D21, D33).
 - Pruebas en `127.0.0.1` con puerto efímero.
 - Estados de agente exactos: `esperando`, `leyendo`, `escribiendo`, `bloqueado`, `terminado`.
 - Tipos de evento exactos (§4 spec): `run_inicio`, `lanzado`, `estado`, `herramienta`, `denegado`, `fichero`, `respuesta`, `fin_agente`, `aviso`, `vuelta`, `run_fin`.

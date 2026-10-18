@@ -7,3 +7,5 @@ logs/
 .env
 cola/
 cerrojo.lock
+notas/
+copias/
