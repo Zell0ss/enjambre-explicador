@@ -75,6 +75,11 @@ A run stops when the article is approved (zero failures and the newcomer says *r
 
 You need Python 3.12 and, for real runs, the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) logged in (subscription or API key). Fake mode spends nothing.
 
+The repo never logs in by itself: each agent runs the `claude` CLI bundled with the Agent SDK, which uses whatever this machine already has. That's `ANTHROPIC_API_KEY` if it's set; otherwise the session saved in `~/.claude/` by `claude` → `/login`. Two consequences:
+
+- **If your first real run fails at the cartographer**, check that `claude` is logged in. The real reason is in the `aviso` event of `salidas/<repo>/<run>/eventos.jsonl`.
+- **The dollars mean different things.** With an API key, the cap is real money. With a subscription, it's the equivalent cost the SDK reports, and what you actually spend is your usage window. That's why the night queue runs at 02:30 and waits for the session limit to reset.
+
 ```bash
 git clone https://github.com/Zell0ss/enjambre-explicador.git
 cd enjambre-explicador

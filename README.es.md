@@ -75,6 +75,11 @@ Un run para cuando el artículo queda aprobado (cero fallos y el novato dice *li
 
 Hace falta Python 3.12 y, para runs reales, el [CLI de Claude Code](https://docs.claude.com/en/docs/claude-code) con sesión iniciada (suscripción o clave de API). El modo falso no gasta nada.
 
+El repo nunca inicia sesión por su cuenta: cada agente usa el `claude` que trae el Agent SDK, con lo que ya haya en la máquina. Es decir, `ANTHROPIC_API_KEY` si está puesta y, si no, la sesión que guardó `claude` → `/login` en `~/.claude/`. Eso tiene dos consecuencias:
+
+- **Si el primer run real falla en el cartógrafo**, mira si `claude` tiene la sesión iniciada. El motivo real está en el evento `aviso` de `salidas/<repo>/<run>/eventos.jsonl`.
+- **Los dólares no significan lo mismo.** Con clave de API, el tope es dinero de verdad. Con suscripción, es el coste equivalente que da el SDK, y lo que se gasta de verdad es la ventana de uso. Por eso la cola de la noche va a las 02:30 y espera a que se renueve el límite de sesión.
+
 ```bash
 git clone https://github.com/Zell0ss/enjambre-explicador.git
 cd enjambre-explicador
