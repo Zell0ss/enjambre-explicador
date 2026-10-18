@@ -286,3 +286,100 @@ async def test_la_noche_que_empieza_despues_de_las_7_cuenta_la_del_dia_siguiente
                 leer_fn=_secuencia([_l(A, "fallo:trazador:error", 1.0, datetime(2026, 10, 17, 1, 0)),
                                     _l(A, "aprobado", 1.0)], []))
     assert len(dormidos) == 1
+
+
+# --- D42 (anexo 2026-10-17, Tarea 30): normativas, tal cual ---
+from enjambre.cola import retirar
+
+
+def test_retirar_mueve_a_retiradas(tmp_path):
+    _encola(tmp_path, A, B)
+    pa, pb = pendientes(tmp_path)
+    assert retirar(pa["id"], raiz_cola=tmp_path)
+    assert [p["fuente"] for p in pendientes(tmp_path)] == [B]
+    [movida] = (tmp_path / "retiradas").glob("*.json")
+    datos = json.loads(movida.read_text())
+    assert movida.stem == pa["id"] and datos["historial"][-1]["motivo"] == "retirada" and "id" not in datos
+
+
+def test_retirar_una_fallida(tmp_path):
+    _encola(tmp_path, A)
+    [pa] = pendientes(tmp_path)
+    (tmp_path / "fallidas").mkdir()
+    (tmp_path / "pendientes" / f"{pa['id']}.json").rename(tmp_path / "fallidas" / f"{pa['id']}.json")
+    assert retirar(pa["id"], raiz_cola=tmp_path) and fallidas(tmp_path) == []
+
+
+def test_retirar_lo_que_no_esta_o_no_vale(tmp_path):
+    assert retirar("20261014-200000-nada", raiz_cola=tmp_path) is False
+    for malo in ("../x", "20261014-200000-a/b", "", "x", "20261014-200000-a.json/.."):
+        with pytest.raises(ValueError):
+            retirar(malo, raiz_cola=tmp_path)
+
+
+def test_el_id_no_se_escribe_en_el_json(tmp_path):
+    _encola(tmp_path, A)
+    [pa] = pendientes(tmp_path)
+    assert "id" not in json.loads((tmp_path / "pendientes" / f"{pa['id']}.json").read_text())
+
+
+async def test_noche_salta_una_que_se_saco_antes_de_leerla(tmp_path):
+    _encola(tmp_path, A, B)
+    pa, pb = pendientes(tmp_path)
+    llamadas = []
+    async def leer_fn(fuente, tope):
+        llamadas.append(fuente)
+        if fuente == A:
+            retirar(pb["id"], raiz_cola=tmp_path)
+        return _lectura(fuente, "aprobado", 1.0)
+    await noche(raiz_cola=tmp_path, leer_fn=leer_fn)
+    assert llamadas == [A]
+
+
+async def test_noche_no_recrea_la_que_se_saca_durante_su_lectura(tmp_path):
+    _encola(tmp_path, A)
+    [pa] = pendientes(tmp_path)
+    async def leer_fn(fuente, tope):
+        retirar(pa["id"], raiz_cola=tmp_path)
+        return _lectura(fuente, "aprobado", 1.0)
+    r = await noche(raiz_cola=tmp_path, leer_fn=leer_fn)
+    assert pendientes(tmp_path) == [] and not list((tmp_path / "hechas").glob("*.json"))
+    assert len(list((tmp_path / "retiradas").glob("*.json"))) == 1 and r["gastado_usd"] == 1.0
+
+
+# --- añadidas (no normativas) ---
+
+def test_retirar_dos_veces_la_segunda_es_false(tmp_path):
+    _encola(tmp_path, A)
+    [pa] = pendientes(tmp_path)
+    assert retirar(pa["id"], raiz_cola=tmp_path) is True
+    assert retirar(pa["id"], raiz_cola=tmp_path) is False
+
+
+def test_retirar_un_json_ilegible_lo_mueve_igual(tmp_path):
+    (tmp_path / "pendientes").mkdir()
+    (tmp_path / "pendientes" / "20261014-200000-roto.json").write_text("{no es json")
+    assert retirar("20261014-200000-roto", raiz_cola=tmp_path) is True
+    assert (tmp_path / "retiradas" / "20261014-200000-roto.json").exists()
+
+
+def test_retirar_no_acepta_ids_con_mayusculas_ni_rutas(tmp_path):
+    for malo in ("20261014-200000-Repo", "/etc/passwd", "20261014-200000-a\n", "20261014-200000-a b", None):
+        with pytest.raises(ValueError):
+            retirar(malo, raiz_cola=tmp_path)
+
+
+def test_raiz_cola_por_defecto_se_lee_al_llamar(tmp_path, monkeypatch):
+    # R2 / `CLAUDE.md`: el valor por defecto no se fija en la firma.
+    import enjambre.cola as cola_mod
+    monkeypatch.setattr(cola_mod, "RAIZ_COLA", tmp_path)
+    encolar("https://github.com/x/a")
+    assert [p["nombre"] for p in pendientes()] == ["a"] and fallidas() == []
+    assert retirar(pendientes()[0]["id"]) is True
+
+
+async def test_noche_sin_raiz_cola_usa_la_de_modulo(tmp_path, monkeypatch):
+    import enjambre.cola as cola_mod
+    monkeypatch.setattr(cola_mod, "RAIZ_COLA", tmp_path)
+    r = await noche(leer_fn=_leer_fn({}, []))
+    assert r["quedan"] == 0 and r["lecturas"] == []

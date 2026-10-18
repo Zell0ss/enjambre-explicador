@@ -689,3 +689,15 @@ def test_pesar_no_toma_el_cerrojo(fase3):
     finally:
         p.kill()
         p.wait()
+
+
+# --- D42 (anexo 2026-10-17, Tarea 30): normativa, tal cual ---
+def test_retirar_desde_la_pagina(fase3):
+    _post(fase3.base + "/api/encolar", {"repo": "https://github.com/x/a"})
+    [pend] = json.loads(get(fase3.base + "/api/cola")[1])["pendientes"]
+    assert _post(fase3.base + "/api/retirar", {"id": pend["id"]}, cabeceras=False)[0] == 403
+    c, r = _post(fase3.base + "/api/retirar", {"id": pend["id"]})
+    assert c == 200 and r == {"retirada": True}
+    assert json.loads(get(fase3.base + "/api/cola")[1])["pendientes"] == []
+    assert _post(fase3.base + "/api/retirar", {"id": pend["id"]})[0] == 404
+    assert _post(fase3.base + "/api/retirar", {"id": "../../x"})[0] == 400

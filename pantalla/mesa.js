@@ -1049,6 +1049,30 @@ async function _cargarCola() {
       if (motivo) partes.push(`último: ${motivo}`);
       detalle.textContent = `— ${partes.join(" · ")}`;
       li.appendChild(detalle);
+      // D42: «Sacar» mueve la petición a cola/retiradas/ (no se borra nada).
+      const sacar = document.createElement("button");
+      sacar.type = "button";
+      sacar.textContent = "Sacar";
+      sacar.className = "btn-sacar";
+      sacar.onclick = async () => {
+        if (!confirm(`¿Sacar ${p.nombre} de la cola? Se conserva su historial en cola/retiradas/.`)) return;
+        sacar.disabled = true;
+        try {
+          const resp = await fetch("/api/retirar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+            body: JSON.stringify({ id: p.id }),
+          });
+          if (resp.status !== 200) {
+            const cuerpo = await resp.json().catch(() => ({}));
+            alert(cuerpo.error || `error ${resp.status} al sacar`);
+          }
+        } catch (err) {
+          alert(`no se pudo contactar con el servidor: ${err}`);
+        }
+        _cargarCola();
+      };
+      li.append(" ", sacar);
       ul.appendChild(li);
     }
     return ul;

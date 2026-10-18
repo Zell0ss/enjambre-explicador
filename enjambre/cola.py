@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -57,19 +58,56 @@ def _listar(carpeta: Path) -> list[tuple[Path, dict]]:
     return salida
 
 
-def pendientes(raiz_cola: Path = RAIZ_COLA) -> list[dict]:
-    return [d for _, d in _listar(raiz_cola / "pendientes")]
+def _con_id(carpeta: Path) -> list[dict]:
+    # D42: `id` (el nombre del fichero sin `.json`) lo añade la lectura y NUNCA se escribe en el
+    # JSON: es el nombre del fichero, y un id guardado dentro podría discrepar de él.
+    return [{**d, "id": ruta.stem} for ruta, d in _listar(carpeta)]
 
 
-def fallidas(raiz_cola: Path = RAIZ_COLA) -> list[dict]:
-    return [d for _, d in _listar(raiz_cola / "fallidas")]
+# Lo que `encolar` pone en el nombre: AAAAMMDD-HHMMSS-<nombre en minúsculas, D37>[-n].
+_ID = re.compile(r"\d{8}-\d{6}-[a-z0-9._-]+")
+
+
+def pendientes(raiz_cola: Path | None = None) -> list[dict]:
+    return _con_id((raiz_cola or RAIZ_COLA) / "pendientes")
+
+
+def fallidas(raiz_cola: Path | None = None) -> list[dict]:
+    return _con_id((raiz_cola or RAIZ_COLA) / "fallidas")
+
+
+def retirar(id: str, *, raiz_cola: Path | None = None, ahora=datetime.now) -> bool:
+    """D42: saca una petición (pendiente o fallida) de la cola, a `retiradas/`. No se
+    borra nada: se conservan el historial y el coste. `True` si estaba, `False` si no;
+    `ValueError` si `id` no tiene la forma de un nombre de la cola (nunca llega a tocar
+    el disco con una ruta que venga de fuera)."""
+    if not isinstance(id, str) or not _ID.fullmatch(id):
+        raise ValueError(f"id de petición no válido: {id!r}")
+    raiz_cola = raiz_cola or RAIZ_COLA
+    for carpeta in ("pendientes", "fallidas"):
+        ruta = raiz_cola / carpeta / f"{id}.json"
+        if not ruta.is_file():
+            continue
+        try:
+            datos = json.loads(ruta.read_text(encoding="utf-8"))
+            datos.setdefault("historial", []).append({"t": f"{ahora():%Y-%m-%dT%H:%M:%S}", "motivo": "retirada"})
+            _escribir(ruta, datos)
+        except (OSError, ValueError):
+            pass  # ilegible: se mueve igual, sin entrada nueva
+        try:
+            _mover(ruta, raiz_cola / "retiradas")
+        except FileNotFoundError:
+            return False  # se la llevó otro (la noche, otro "Sacar") entre medias
+        return True
+    return False
 
 
 def encolar(
-    texto: str, *, raiz_cola: Path = RAIZ_COLA, ahora=datetime.now, **resolver_kw
+    texto: str, *, raiz_cola: Path | None = None, ahora=datetime.now, **resolver_kw
 ) -> tuple[Path, bool]:
     """Devuelve `(ruta, nuevo)`. Una fuente ya pendiente no se duplica. Lanza
     `FuenteInvalida` (sin tocar `git` ni la red: `resolver` es pura)."""
+    raiz_cola = raiz_cola or RAIZ_COLA
     f = resolver(texto, **resolver_kw)
     for ruta, pet in _listar(raiz_cola / "pendientes"):
         # Sin distinguir mayúsculas: GitHub tampoco las distingue, y `.../Repo`
@@ -93,7 +131,7 @@ def _mover(ruta: Path, destino: Path) -> None:
 
 
 async def noche(
-    *, raiz_cola: Path, leer_fn, techo_usd: float = 10.0, tope_run_usd: float = 5.0,
+    *, raiz_cola: Path | None = None, leer_fn, techo_usd: float = 10.0, tope_run_usd: float = 5.0,
     minimo_usd: float = 1.0, max_intentos: int = 3, hasta: time = time(7, 0),
     dormir=asyncio.sleep, ahora=datetime.now,
 ) -> dict:
@@ -105,6 +143,7 @@ async def noche(
     vuelve a leer la misma petición (que continúa el run, D24). Una sola vez por
     noche, y solo si la espera acaba antes de `hasta` (la mañana de Josem). La
     segunda lectura no suma otro intento: el de esa noche cubre las dos."""
+    raiz_cola = raiz_cola or RAIZ_COLA
     lecturas, errores, gastado, parada = [], [], 0.0, None
     esperado_a: datetime | None = None
     inicio = ahora()
@@ -141,6 +180,10 @@ async def noche(
         return l, para, hecha
 
     for ruta, pet in _listar(raiz_cola / "pendientes"):
+        # D42: la lista es de cuando empezó la noche; si alguien sacó esta petición
+        # desde la página mientras se leían las anteriores, ya no hay que leerla.
+        if not ruta.exists():
+            continue
         disponible = techo_usd - gastado
         if disponible < minimo_usd:
             parada = "techo"
@@ -157,11 +200,21 @@ async def noche(
             await dormir(max(0.0, (reintentar_a + timedelta(seconds=60) - ahora()).total_seconds()))
             l, parada, hecha = await intentar(pet, min(tope_run_usd, techo_usd - gastado))
 
+        if not ruta.exists():
+            # D42: la sacaron durante su lectura. No se recrea (`_escribir` la resucitaría)
+            # ni se mueve: ya está en `retiradas/`. El gasto sí cuenta para el techo.
+            obtener_log().info(f"cola: {ruta.name} se retiró durante su lectura; no se actualiza")
+            if parada:
+                break
+            continue
         _escribir(ruta, pet)
-        if hecha:
-            _mover(ruta, raiz_cola / "hechas")
-        elif pet["intentos"] >= max_intentos:
-            _mover(ruta, raiz_cola / "fallidas")
+        try:
+            if hecha:
+                _mover(ruta, raiz_cola / "hechas")
+            elif pet["intentos"] >= max_intentos:
+                _mover(ruta, raiz_cola / "fallidas")
+        except FileNotFoundError:  # la sacaron justo entre la comprobación y el movimiento
+            obtener_log().info(f"cola: {ruta.name} se retiró justo al acabar; no se mueve")
         if parada:
             break
 

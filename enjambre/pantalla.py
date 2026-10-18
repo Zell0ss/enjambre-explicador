@@ -269,7 +269,7 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         preflight falla antes de que el navegador llegue a mandar el POST
         de verdad."""
         ruta = urllib.parse.urlsplit(self.path).path
-        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar", "/api/encolar", "/api/pesar"):
+        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar", "/api/encolar", "/api/pesar", "/api/retirar"):
             self.send_error(404)
             return
 
@@ -286,6 +286,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             self._encolar()
         elif ruta == "/api/pesar":
             self._pesar()
+        elif ruta == "/api/retirar":
+            self._retirar()
         else:
             self._reanudar()
 
@@ -536,6 +538,28 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             "peso": {k: dato[k] for k in ("ficheros", "bytes", "ficheros_codigo", "bytes_codigo", "tokens")},
             "estimacion": {k: dato[k] for k in ("banda", "usd_min", "usd_max", "tope_usd", "alerta")},
         })
+
+    def _retirar(self) -> None:
+        """`POST /api/retirar {"id"}` (D42): saca una petición de la cola a `retiradas/`
+        (no se borra nada). 200 si estaba, 404 si no, 400 si el id no tiene la forma de
+        un nombre de la cola."""
+        longitud = int(self.headers.get("Content-Length") or 0)
+        crudo = self.rfile.read(longitud) if longitud > 0 else b""
+        try:
+            cuerpo = json.loads(crudo) if crudo else {}
+        except json.JSONDecodeError:
+            self._responde_json(400, {"error": "cuerpo no es JSON válido"})
+            return
+        id_ = cuerpo.get("id") if isinstance(cuerpo, dict) else None
+        try:
+            retirada = cola_mod.retirar(id_, raiz_cola=self.server.raiz_cola)  # type: ignore[attr-defined]
+        except ValueError as e:
+            self._responde_json(400, {"error": str(e)})
+            return
+        if not retirada:
+            self._responde_json(404, {"error": "esa petición no está en la cola"})
+            return
+        self._responde_json(200, {"retirada": True})
 
     def _servir_cola(self) -> None:
         raiz = self.server.raiz_cola  # type: ignore[attr-defined]
