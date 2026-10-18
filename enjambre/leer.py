@@ -116,7 +116,21 @@ async def leer(
     # no hay que pagar un run entero para descubrirlo. Con `falso` la nota no va al vault.
     if not falso:
         comprobar(raiz_notas, f.nombre, f.texto)
-    ruta, commit = actualizar(f, raiz_copias=raiz_copias, remoto=remoto)
+    # D41: al continuar un run de una URL se lee SU commit, no el de ahora: lo
+    # pagado es de ese commit, y un repo vivo cambia entre una noche y otra. Con
+    # una ruta local nunca se mueve el repo (sigue D36).
+    fijado = None
+    if reanudar is not None and f.url is not None:
+        fijado = _run_inicio(_eventos(reanudar)).get("commit")
+        if saltar_si_igual and fijado:
+            acabado = _ultimo_acabado(salidas, f.texto)
+            if acabado is not None and acabado.get("commit") == fijado:
+                # Ese commit ya tiene un run acabado: no hace falta ni tocar `git`.
+                nota = raiz_notas / f"{f.nombre}.md"
+                return Lectura(fuente=f.texto, nombre=f.nombre, commit=fijado, run=None, salida=None,
+                               motivo="sin_cambios", vueltas=0, coste_usd=0.0,
+                               nota=nota if nota.exists() else None)
+    ruta, commit = actualizar(f, raiz_copias=raiz_copias, remoto=remoto, commit=fijado)
 
     # D35: el salto se decide con `salidas/` (el último run ACABADO de esta fuente
     # y este commit), no con la nota: una nota que Josem sacó de Clippings/ no

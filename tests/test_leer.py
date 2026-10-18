@@ -8,7 +8,7 @@ from enjambre.fuente import resolver
 from enjambre.leer import leer, ultimo_parado
 from enjambre.nota import leer_frontmatter
 from enjambre.tipos import Resultado
-from tests.gitutil import repo_con_commit, rev
+from tests.gitutil import git, repo_con_commit, rev
 
 
 @pytest.fixture
@@ -409,3 +409,38 @@ async def test_el_peso_no_para_la_lectura(e, monkeypatch):
     monkeypatch.setattr(peso_mod, "pesar", roto)
     l = await leer(_f(e), lanzar=hacer_lanzar_falso(), **_kw(e))
     assert l.motivo == "aprobado" and _eventos(l.salida)[0]["peso"] is None
+
+
+# --- D41 (anexo 2026-10-17, Tarea 29): normativas, tal cual ---
+@pytest.fixture
+def u(tmp_path):
+    """Fuente URL con un remoto bare local."""
+    trabajo = repo_con_commit(tmp_path / "trabajo")
+    bare = tmp_path / "remoto.git"
+    git("clone", "--bare", str(trabajo), str(bare))
+    return SimpleNamespace(trabajo=trabajo, bare=bare, remoto=f"file://{bare}", salidas=tmp_path / "salidas",
+                           notas=tmp_path / "notas", copias=tmp_path / "copias",
+                           f=resolver("https://github.com/x/proyecto"))
+
+
+def _ku(u, **kw):
+    return dict(salidas=u.salidas, raiz_copias=u.copias, raiz_notas=u.notas, remoto=u.remoto, **kw)
+
+
+@pytest.mark.parametrize("si_cambio", ["nuevo", "error"])
+async def test_d41_continua_en_el_commit_del_run_aunque_el_remoto_avance(u, si_cambio):
+    c1 = rev(u.trabajo)
+    parado = await leer(u.f, lanzar=hacer_lanzar_falso(FALLA), run="r1", **_ku(u))
+    repo_con_commit(u.trabajo, "b.py", "y = 2\n")
+    git("push", "-q", str(u.bare), "HEAD:trunk", cwd=u.trabajo)
+    l = await leer(u.f, lanzar=hacer_lanzar_falso(), reanudar=parado.salida, si_cambio=si_cambio, run="r2", **_ku(u))
+    assert l.continuado and l.run == "r1" and l.commit == c1 and l.motivo == "aprobado"
+    assert rev(u.copias / "proyecto") == c1
+    assert leer_frontmatter(l.nota)["commit"] == c1
+
+
+async def test_d41_salta_si_ese_commit_ya_tiene_run_acabado(u):
+    hecho = await leer(u.f, lanzar=hacer_lanzar_falso(), run="r1", **_ku(u))
+    parado = await leer(u.f, lanzar=hacer_lanzar_falso(FALLA), run="r2", **_ku(u))
+    l = await leer(u.f, lanzar=hacer_lanzar_falso(), reanudar=parado.salida, saltar_si_igual=True, **_ku(u))
+    assert l.motivo == "sin_cambios" and hecho.motivo == "aprobado"

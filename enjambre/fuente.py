@@ -197,6 +197,7 @@ def _canonico(url: str) -> str:
 
 # D38: dentro de `.git`, para que ni `clean` ni un `git add .` la toquen.
 _MARCA = "enjambre"
+_SHA = re.compile(r"[0-9a-f]{40}")
 _SALIDA = "si es una copia del enjambre, bórrala y se volverá a clonar"
 
 
@@ -236,6 +237,12 @@ def _comprobar_intacta(ruta: Path, timeout_s: float) -> None:
         raise CopiaAjena(f"la copia tiene trabajo local en {ruta}: {'; '.join(trabajo)}; {_SALIDA}")
 
 
+def _fijar(ruta: Path, commit: str, timeout_s: float) -> None:
+    """D41: trae ese commit y deja la copia en él. `commit` ya está validado (40 hex)."""
+    _git(["fetch", "--depth", "1", "origin", commit], ruta, timeout_s)
+    _git(["reset", "--hard", "FETCH_HEAD"], ruta, timeout_s)
+
+
 def _commit(ruta: Path, timeout_s: float) -> str:
     return _git(["rev-parse", "HEAD"], ruta, timeout_s)
 
@@ -243,15 +250,27 @@ def _commit(ruta: Path, timeout_s: float) -> str:
 def actualizar(
     f: Fuente,
     *,
-    raiz_copias: Path = RAIZ_COPIAS,
+    raiz_copias: Path | None = None,
     remoto: str | None = None,
     timeout_s: float = 300,
+    commit: str | None = None,
 ) -> tuple[Path, str | None]:
     """Deja la copia al día y devuelve `(ruta, commit)`.
 
     Una fuente local no se toca: solo se lee su commit (`None` si no es un
     repo git). `remoto` sustituye a `f.url` como URL de clonado (pruebas).
+
+    `commit` (D41; 40 hex en minúsculas) fija la copia de una URL en ese commit
+    en vez de en la rama por defecto: lo pagado de un run parado es de un commit
+    concreto, y se termina sobre él aunque el remoto ya tenga uno más nuevo. Con
+    una fuente local no hace nada (nunca se mueve un repo local). `raiz_copias`
+    es `None` y no `RAIZ_COPIAS` en la firma por la misma razón de siempre: un
+    valor por defecto se fija al importar y las pruebas no podrían redirigirlo.
     """
+    pedido = commit
+    if pedido is not None and not _SHA.fullmatch(pedido):
+        raise FuenteInvalida(f"commit no válido (se esperan 40 hex en minúsculas): {pedido!r}")
+    raiz_copias = raiz_copias or RAIZ_COPIAS
     if f.url is None:
         ruta = Path(f.texto)
         if not (ruta / ".git").exists():
@@ -278,6 +297,10 @@ def actualizar(
         copias.mkdir(parents=True, exist_ok=True)
         try:
             _git(["clone", "--depth", "1", "--", origen, str(ruta)], None, timeout_s)
+            if pedido is not None:
+                # DENTRO del bloque que borra el clon si falla: un sha que ya no existe
+                # no debe dejar una copia sin marca (ajena para siempre, D38).
+                _fijar(ruta, pedido, timeout_s)
             commit = _commit(ruta, timeout_s)
             _marcar(ruta, commit)
         except (GitFallo, OSError):
@@ -305,6 +328,15 @@ def actualizar(
     # D38: que la copia sea de esta URL no demuestra que sea desechable. Solo
     # se toca una copia que el enjambre clonó (marca) y que nadie ha tocado.
     _comprobar_intacta(ruta, timeout_s)
+
+    if pedido is not None:
+        # Intacta, así que su HEAD es el de la marca: si ya es el pedido, no hay nada que traer.
+        if _commit(ruta, timeout_s) == pedido:
+            return ruta, pedido
+        _fijar(ruta, pedido, timeout_s)
+        commit = _commit(ruta, timeout_s)
+        _marcar(ruta, commit)
+        return ruta, commit
 
     # `fetch origin HEAD` (rama por defecto del remoto, D27) y no `origin
     # <rama>`: el clon `--depth 1` es de una sola rama, y si el remoto cambia

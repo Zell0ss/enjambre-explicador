@@ -200,3 +200,68 @@ def test_fuente_local_sin_git(tmp_path):
     d.mkdir(parents=True)
     f = resolver(str(d), raiz_local=tmp_path / "data", raiz_copias=tmp_path / "data" / "copias")
     assert actualizar(f, raiz_copias=tmp_path / "data" / "copias") == (d.resolve(), None)
+
+
+# --- D41 (anexo 2026-10-17, Tarea 29): normativas, tal cual ---
+def _avanza(trabajo, bare, fichero="b.py"):
+    repo_con_commit(trabajo, fichero, "y = 2\n")
+    git("push", "-q", str(bare), "HEAD:trunk", cwd=trabajo)
+    return rev(trabajo)
+
+
+def test_actualizar_a_un_commit_fijado(remoto, tmp_path):
+    trabajo, bare, copias, ruta = _copia(remoto, tmp_path)
+    c1 = rev(trabajo)
+    c2 = _avanza(trabajo, bare)
+    assert actualizar(F, raiz_copias=copias, remoto=f"file://{bare}")[1] == c2   # sin commit: HEAD
+    r, c = actualizar(F, raiz_copias=copias, remoto=f"file://{bare}", commit=c1)  # y vuelve atrás
+    assert c == c1 and rev(ruta) == c1 and not (ruta / "b.py").exists()
+    assert actualizar(F, raiz_copias=copias, remoto=f"file://{bare}", commit=c1)[1] == c1  # la marca la deja intacta
+
+
+def test_commit_fijado_sin_copia_clona_y_lo_fija(remoto, tmp_path):
+    trabajo, bare = remoto
+    c1 = rev(trabajo)
+    _avanza(trabajo, bare)
+    r, c = actualizar(F, raiz_copias=tmp_path / "copias", remoto=f"file://{bare}", commit=c1)
+    assert c == c1 and rev(r) == c1
+
+
+def test_commit_que_ya_no_existe(remoto, tmp_path):
+    trabajo, bare = remoto
+    c2 = _avanza(trabajo, bare)
+    git("reset", "-q", "--hard", "HEAD~1", cwd=trabajo)
+    repo_con_commit(trabajo, "c.py", "z = 3\n")
+    git("push", "-qf", str(bare), "HEAD:trunk", cwd=trabajo)
+    git("gc", "-q", "--prune=now", cwd=bare)
+    copias = tmp_path / "copias"
+    with pytest.raises(GitFallo):
+        actualizar(F, raiz_copias=copias, remoto=f"file://{bare}", commit=c2)
+    assert not (copias / "proyecto").exists()
+
+
+@pytest.mark.parametrize("malo", ["HEAD", "abc", "--upload-pack=x", "A" * 40])
+def test_commit_no_valido(remoto, tmp_path, malo):
+    trabajo, bare = remoto
+    with pytest.raises(FuenteInvalida):
+        actualizar(F, raiz_copias=tmp_path / "copias", remoto=f"file://{bare}", commit=malo)
+
+
+# --- añadidas (no normativas) ---
+
+def test_commit_fijado_no_mueve_una_fuente_local(tmp_path):
+    local = repo_con_commit(tmp_path / "data" / "mio")
+    primero = rev(local)
+    repo_con_commit(local, "b.py", "y = 2\n")
+    f = resolver(str(local), raiz_local=tmp_path / "data", raiz_copias=tmp_path / "data" / "copias")
+    ruta, commit = actualizar(f, raiz_copias=tmp_path / "data" / "copias", commit=primero)
+    assert commit == rev(local) != primero and (local / "b.py").exists()
+
+
+def test_raiz_copias_none_usa_la_de_modulo_al_llamar(remoto, tmp_path, monkeypatch):
+    # El valor por defecto se lee al llamar, no al importar: así las pruebas lo redirigen.
+    import enjambre.fuente as fuente_mod
+    _, bare = remoto
+    monkeypatch.setattr(fuente_mod, "RAIZ_COPIAS", tmp_path / "copias")
+    ruta, _ = actualizar(F, remoto=f"file://{bare}")
+    assert ruta == tmp_path / "copias" / "proyecto"
