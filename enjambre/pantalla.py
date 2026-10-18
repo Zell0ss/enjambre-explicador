@@ -921,7 +921,8 @@ def _crear_analizador() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """`python -m enjambre.pantalla [--host] [--puerto] [--salidas] [--estaticos]`."""
     args = _crear_analizador().parse_args(argv)
-    host = args.host or config.host()
+    # R7: se valida el host venga de `--host` o del entorno (D12): nunca todas las interfaces.
+    host = config.host() if args.host is None else config.validar_host(args.host)
     puerto = config.puerto() if args.puerto is None else args.puerto
     servidor = crear_servidor(host, puerto, args.salidas, args.estaticos)
     print(f"pantalla escuchando en http://{host}:{servidor.server_address[1]}")

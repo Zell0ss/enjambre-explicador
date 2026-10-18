@@ -65,16 +65,21 @@ def raiz_local() -> Path:
     return _ruta("ENJAMBRE_RAIZ_LOCAL", Path.home())
 
 
-def host() -> str:
-    h = valor("ENJAMBRE_HOST") or "127.0.0.1"
+def validar_host(h: str) -> str:
+    """D12: la pantalla lanza runs que gastan, así que nunca escucha en todas las interfaces
+    (`0.0.0.0`, `::`). Una sola validación para el host venga de `--host` o de `ENJAMBRE_HOST`
+    (R7 de la revisión de H7: antes solo se miraba el valor por defecto)."""
     try:
-        todas = ipaddress.ip_address(h.strip("[]")).is_unspecified
+        todas = ipaddress.ip_address(h.strip().strip("[]")).is_unspecified
     except ValueError:
         todas = False  # un nombre de host, no una IP
     if todas:
-        # D12: la pantalla lanza runs que gastan; nunca en todas las interfaces.
-        raise ValueError(f"ENJAMBRE_HOST={h!r} escucharía en todas las interfaces (D12)")
+        raise ValueError(f"el host {h!r} escucharía en todas las interfaces (D12)")
     return h
+
+
+def host() -> str:
+    return validar_host(valor("ENJAMBRE_HOST") or "127.0.0.1")
 
 
 def puerto() -> int:

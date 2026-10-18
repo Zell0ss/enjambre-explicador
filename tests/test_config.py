@@ -89,3 +89,25 @@ def test_host_del_env_de_seb01_vale(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "RUTA_ENV", env)
     monkeypatch.delenv("ENJAMBRE_HOST", raising=False)
     assert config.host() == "100.87.64.121"
+
+
+# --- R7 (revisión de H7): `--host` también pasa por D12 ---
+
+@pytest.mark.parametrize("malo", ["0.0.0.0", "::", "[::]", " 0.0.0.0 "])
+def test_pantalla_main_rechaza_un_host_a_mano_de_todas_las_interfaces(malo):
+    from enjambre import pantalla
+    abiertos = []
+    original = pantalla.crear_servidor
+    pantalla.crear_servidor = lambda *a, **k: abiertos.append(a) or original(*a, **k)
+    try:
+        with pytest.raises(ValueError):
+            pantalla.main(["--host", malo, "--puerto", "0"])
+    finally:
+        pantalla.crear_servidor = original
+    assert abiertos == []  # no llegó a abrir el puerto
+
+
+def test_validar_host_deja_pasar_lo_normal():
+    assert config.validar_host("127.0.0.1") == "127.0.0.1"
+    assert config.validar_host("localhost") == "localhost"
+    assert config.validar_host("100.87.64.121") == "100.87.64.121"
