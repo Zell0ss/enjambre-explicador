@@ -5,6 +5,9 @@ Cada archivo tiene un frontmatter YAML-like y un cuerpo (el prompt).
 No usamos PyYAML; parseamos a mano.
 """
 
+import argparse
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +35,58 @@ ROLES: tuple[str, ...] = (
 )
 
 
+# D43: el orden de los prompts, el mismo con el que se numeran sus copias de lectura (01..07).
+ORDEN = ROLES
+
+
+def aviso_copia(rol: str) -> str:
+    return (f"> [!note] Copia de lectura. El original está en el repo: `.claude/agents/{rol}.md`. "
+            "Si la editas aquí, la próxima copia la pisa.")
+
+
+def copiar_a(destino: Path, dir_agentes: Path | None = None) -> list[Path]:
+    """D43: escribe `destino/<NN>-<rol>.md`, una copia de lectura de cada prompt: el
+    original con `aviso_copia` justo después del `---` que cierra el frontmatter.
+
+    El repo es el original y el vault (u otro sitio) solo tiene copias; el código no
+    sabe dónde está el vault: `destino` lo da quien lo lanza. Escritura atómica (un
+    temporal en la misma carpeta y `os.replace`), porque Syncthing puede leer a medias.
+    `destino` tiene que existir (`FileNotFoundError`)."""
+    dir_agentes = dir_agentes or DIR_AGENTES
+    if not destino.is_dir():
+        raise FileNotFoundError(f"no existe la carpeta de destino: {destino}")
+    escritas = []
+    for n, rol in enumerate(ORDEN, 1):
+        original = (dir_agentes / f"{rol}.md").read_text(encoding="utf-8")
+        if not original.startswith("---\n") or "\n---\n" not in original[3:]:
+            raise ValueError(f"{rol}.md no tiene un frontmatter cerrado")
+        cierre = original.index("\n---\n", 3) + len("\n---\n")
+        copia = original[:cierre] + aviso_copia(rol) + "\n\n" + original[cierre:]
+        ruta = destino / f"{n:02d}-{rol}.md"
+        tmp = destino / f".{ruta.name}.{os.getpid()}.tmp"
+        try:
+            tmp.write_text(copia, encoding="utf-8")
+            os.replace(tmp, ruta)
+        finally:
+            tmp.unlink(missing_ok=True)
+        escritas.append(ruta)
+    return escritas
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m enjambre.agentes --copiar-a <carpeta>` (lo lanza el arquitecto, D43)."""
+    a = argparse.ArgumentParser(prog="python -m enjambre.agentes")
+    a.add_argument("--copiar-a", type=Path, required=True, metavar="CARPETA")
+    args = a.parse_args(argv)
+    try:
+        for ruta in copiar_a(args.copiar_a):
+            print(ruta)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"{type(e).__name__}: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def cargar(rol: str, dir_agentes: Path = DIR_AGENTES) -> Agente:
     """
     Carga y parsea un agente por su rol.
@@ -47,10 +102,9 @@ def cargar(rol: str, dir_agentes: Path = DIR_AGENTES) -> Agente:
         FileNotFoundError: si el archivo del rol no existe
         ValueError: si falta el frontmatter o faltan campos obligatorios
     """
-    # Construir la ruta del archivo (sigue symlinks)
+    # Construir la ruta del archivo (D43: son ficheros del repo, ya no enlaces al vault)
     archivo = dir_agentes / f"{rol}.md"
 
-    # Si es un symlink, se sigue automáticamente con read_text()
     try:
         contenido = archivo.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -116,3 +170,7 @@ def cargar(rol: str, dir_agentes: Path = DIR_AGENTES) -> Agente:
         tools=tools_list,
         prompt=prompt_text,
     )
+
+
+if __name__ == "__main__":
+    sys.exit(main())
