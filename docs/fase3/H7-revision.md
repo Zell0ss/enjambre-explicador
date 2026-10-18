@@ -49,3 +49,9 @@ resultado, nadie más:
 Tiene que salir el vault (`…/Clippings/repo-articles`), `/data/github-abordaje`, `/data` y `100.87.64.121`.
 
 Al fusionar, el arquitecto ejecuta `--copiar-a` sobre la carpeta del proyecto en el vault (D43).
+
+## 5. Anexo: R7 (`f41e01b`)
+
+R7 está cerrado. `config.validar_host` es la única validación y la usan `host()` y `pantalla.main`, tanto con `--host` como sin él. La prueba de
+regresión comprueba que `crear_servidor` no llega a llamarse con `0.0.0.0`, `::`, `[::]` ni `" 0.0.0.0 "`. Pasan las 381 pruebas (ejecutadas
+por el arquitecto). **Listo para fusionar**, después de la comprobación del `.env` (§4).
