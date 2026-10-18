@@ -85,6 +85,8 @@ desde que se paró (D36): sale con "el repo ha cambiado… lanza uno nuevo"; la 
 
 Si una lectura de la noche para por el límite de sesión de Claude y el aviso dice cuándo se renueva (`resets 2:40am`), la cola espera a esa hora más un minuto y continúa el mismo run (D39): una sola vez por noche y solo si acaba antes de las 07:00. Durante la espera sigue teniendo el cerrojo, así que no se puede lanzar nada desde la página; el Telegram de la mañana lo cuenta («Esperé al reset de las 02:40»).
 
+**Pesar antes de gastar (D40):** `python -m enjambre.peso <fuente>` (o el botón «Pesar» de la página) dice cuánto pesa la fuente y cuánto costaría, p. ej. `101 ficheros, 888 kB · código 199 kB (~49k tokens) · S · 1-3 $ · cabe en 5 $`. Una URL se clona en un temporal sin gastar tokens y se borra. Solo informa. **Continuar** un run de una URL sigue en el commit del run aunque el repo haya avanzado (D41). En "Esta noche", **Sacar** mueve una petición a `cola/retiradas/` sin borrar nada (D42).
+
 ### La noche: instalar el timer (lo hace Josem, requiere sudo)
 
 ```bash

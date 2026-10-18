@@ -28,7 +28,7 @@ python -m enjambre.pantalla
 
 ## Fase 3 (abordaje): piezas y reglas
 
-`fuente.py` (D26, D27, D37, D38) · `nota.py` (D28) · `aviso.py` (D32, D34) · `leer.py` · `cola.py` (D29, D30, D35) · `cerrojo.py` (D31).
+`fuente.py` (D26, D27, D37, D38, D41) · `nota.py` (D28) · `aviso.py` (D32, D34) · `leer.py` · `cola.py` (D29, D30, D35, D39, D42) · `cerrojo.py` (D31) · `peso.py` (D40).
 
 - **Solo `fuente.py` llama a `git`**, siempre por `_git` (sin terminal, sin credenciales, `stdin` cerrado, timeout, lista de argumentos y `--`). Nunca `shell=True`.
 - **Una copia de `/data/github-abordaje/` solo se toca si la clonó el enjambre (marca `.git/enjambre`) y sigue intacta** (D38). Cualquier otra cosa es `CopiaAjena`: no se arregla en código, se borra a mano. Una vez se perdió trabajo de otro proyecto por no comprobarlo.
@@ -41,6 +41,9 @@ python -m enjambre.pantalla
 - **`.env`** (Telegram, D34) lo crea Josem y nunca se lee ni se commitea.
 - **Este directorio arranca un servicio (el timer de la noche): se queda en `main` y limpio.** Para trabajar, `git worktree add ../enjambre-explicador-<rama> -b feature/<rama>` con `.venv` propio. Fusiona Josem con `--ff-only`.
 - **La noche espera al reset del límite de sesión (D39):** si una lectura para por `session limit` y el aviso trae la hora (`leer.reset_de_limite` → `Lectura.reintentar_a`), `cola.noche` duerme hasta esa hora + 1 min y reintenta la misma petición, **una vez por noche** y solo si acaba antes de las 07:00. El cerrojo se mantiene durante la espera.
+- **`peso.py` solo informa (D40):** cuenta lo que sigue git (`fuente.ficheros`) y estima una banda de coste; no decide nada. Una URL se pesa en un temporal (`fuente.clonar`), nunca en `RAIZ_COPIAS`. `python -m enjambre.peso <fuente>`; en la página, «Pesar»; en `run_inicio.peso`.
+- **Continuar un run de una URL lee SU commit (D41)**, no el de ahora: `actualizar(..., commit=<sha>)` (40 hex) fija la copia ahí. Con una ruta local nunca se mueve el repo (D36).
+- **Sacar de la cola mueve a `cola/retiradas/`, no borra (D42).** `pendientes()`/`fallidas()` añaden `id` (el nombre del fichero); nunca se escribe en el JSON. La noche comprueba que cada petición sigue ahí antes de leerla y no recrea la que se sacó durante su lectura.
 - Un `--falso` nunca escribe en el vault (la nota va a `<salida>/nota.md`) ni cuenta para saltar o continuar un run real (D35, R4).
 
 ## Reglas
