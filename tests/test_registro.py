@@ -33,3 +33,27 @@ def test_sin_logcentral_cae_a_logging(tmp_path, monkeypatch):
             assert (tmp_path / "enjambre.log").read_text().count("hola") == 1
     finally:
         importlib.reload(registro)
+
+
+# --- añadida (no normativa) ---
+
+def test_sin_logcentral_el_log_es_json_como_el_de_logcentral(tmp_path, monkeypatch):
+    # Hallado en el clon limpio de la aceptación: `test_logger_escribe_json_con_source` falla sin LogCentral
+    # si el respaldo escribe texto plano.
+    import enjambre.registro as registro
+    try:
+        with monkeypatch.context() as m:
+            m.setitem(sys.modules, "logcentral_client", None)
+            r = importlib.reload(registro)
+            log = r.obtener_log(tmp_path)
+            try:
+                raise ValueError("boom")
+            except ValueError:
+                log.exception("fallo")
+            for h in log.handlers:
+                h.flush()
+            entrada = json.loads((tmp_path / "enjambre.log").read_text().splitlines()[-1])
+            assert entrada["source"] == "enjambre" and entrada["level"] == "ERROR" and entrada["message"] == "fallo"
+            assert "ValueError: boom" in entrada["exception"]
+    finally:
+        importlib.reload(registro)
