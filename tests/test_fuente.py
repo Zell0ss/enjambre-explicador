@@ -262,6 +262,6 @@ def test_raiz_copias_none_usa_la_de_modulo_al_llamar(remoto, tmp_path, monkeypat
     # El valor por defecto se lee al llamar, no al importar: así las pruebas lo redirigen.
     import enjambre.fuente as fuente_mod
     _, bare = remoto
-    monkeypatch.setattr(fuente_mod, "RAIZ_COPIAS", tmp_path / "copias")
+    monkeypatch.setenv("ENJAMBRE_COPIAS", str(tmp_path / "copias"))
     ruta, _ = actualizar(F, remoto=f"file://{bare}")
     assert ruta == tmp_path / "copias" / "proyecto"

@@ -1,6 +1,6 @@
 """
 La fuente de una lectura (fase 3, D26 y D27): una URL pública de GitHub o una
-ruta local bajo `/data`.
+ruta local bajo `ENJAMBRE_RAIZ_LOCAL`.
 
 `resolver` normaliza y valida (pura: ni `git` ni red). `actualizar` deja la
 copia local al día y devuelve `(ruta, commit)`. **Este es el único módulo que
@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-RAIZ_COPIAS = Path("/data/github-abordaje")
+from enjambre import config
 
 # Lista blanca, no lista negra: `.`/`..` y lo que empiece por `-` se rechazan
 # aparte (un nombre así sería una ruta o una opción de git, no un repo).
@@ -77,8 +77,10 @@ def _resolver_url(texto: str) -> Fuente:
 
 
 def resolver(
-    texto: str, *, raiz_local: Path = Path("/data"), raiz_copias: Path = RAIZ_COPIAS
+    texto: str, *, raiz_local: Path | None = None, raiz_copias: Path | None = None
 ) -> Fuente:
+    raiz_local = raiz_local or config.raiz_local()
+    raiz_copias = raiz_copias or config.raiz_copias()
     texto = texto.strip()
     if not texto:
         raise FuenteInvalida("fuente vacía")
@@ -95,7 +97,7 @@ def resolver(
         raise FuenteInvalida(
             f"{texto!r} es una copia del enjambre: dale la URL de GitHub, no la ruta de la copia"
         )
-    # Estrictamente dentro: la propia raíz (`/data`) no es un proyecto.
+    # Estrictamente dentro: la propia raíz local no es un proyecto.
     if ruta == raiz_local.resolve() or not ruta.is_relative_to(raiz_local.resolve()):
         raise FuenteInvalida(f"{texto!r} no está bajo {raiz_local}")
     return Fuente(texto=str(ruta), nombre=ruta.name, url=None)
@@ -264,13 +266,14 @@ def actualizar(
     en vez de en la rama por defecto: lo pagado de un run parado es de un commit
     concreto, y se termina sobre él aunque el remoto ya tenga uno más nuevo. Con
     una fuente local no hace nada (nunca se mueve un repo local). `raiz_copias`
-    es `None` y no `RAIZ_COPIAS` en la firma por la misma razón de siempre: un
-    valor por defecto se fija al importar y las pruebas no podrían redirigirlo.
+    es `None` y no un valor en la firma por la misma razón de siempre: un valor
+    por defecto se fija al importar y las pruebas no podrían redirigirlo (D44:
+    `config.raiz_copias()`, que se lee al llamar).
     """
     pedido = commit
     if pedido is not None and not _SHA.fullmatch(pedido):
         raise FuenteInvalida(f"commit no válido (se esperan 40 hex en minúsculas): {pedido!r}")
-    raiz_copias = raiz_copias or RAIZ_COPIAS
+    raiz_copias = raiz_copias or config.raiz_copias()
     if f.url is None:
         ruta = Path(f.texto)
         if not (ruta / ".git").exists():

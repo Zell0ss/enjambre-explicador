@@ -61,7 +61,7 @@ def test_pesar_fuente_url_no_toca_las_copias(tmp_path, monkeypatch):
     trabajo = repo_con_commit(tmp_path / "trabajo", "a.py", "x" * 80)
     bare = tmp_path / "remoto.git"
     git("clone", "--bare", str(trabajo), str(bare))
-    monkeypatch.setattr(fuente_mod, "RAIZ_COPIAS", tmp_path / "copias")
+    monkeypatch.setenv("ENJAMBRE_COPIAS", str(tmp_path / "copias"))
     tmp = tmp_path / "tmp"; tmp.mkdir()
     p = pesar_fuente(resolver("https://github.com/x/proyecto"), remoto=f"file://{bare}", tmp=tmp)
     assert p == Peso(1, 80, 1, 80)

@@ -64,5 +64,5 @@ class Lectura:
     coste_usd: float  # lo gastado EN ESTA lectura: una continuación no cuenta lo anterior (D24, D30)
     nota: Path | None
     continuado: bool = False
-    # D39: cuándo se renueva el límite de sesión, si el run paró por eso (hora local de seb01).
+    # D39: cuándo se renueva el límite de sesión, si el run paró por eso (hora local de la máquina).
     reintentar_a: datetime | None = None

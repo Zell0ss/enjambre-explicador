@@ -34,6 +34,7 @@ from pathlib import Path
 # subproceso aparte, D21). `cola` solo importa `leer` dentro de una función,
 # que la pantalla nunca llama; `tests/test_pantalla.py` lo comprueba.
 from enjambre import cerrojo as cerrojo_mod
+from enjambre import config
 from enjambre import cola as cola_mod
 from enjambre import peso as peso_mod
 from enjambre.fuente import Fuente, FuenteInvalida, GitFallo, resolver
@@ -851,7 +852,7 @@ def crear_servidor(
     salidas: Path,
     estaticos: Path,
     *,
-    raiz_repos: Path = Path("/data"),
+    raiz_repos: Path | None = None,
     comando: Callable[[list[str]], list[str]] | None = None,
     dir_logs: Path = _RAIZ_ENJAMBRE / "logs" / "lanzamientos",
     raiz_cola: Path | None = None,
@@ -885,7 +886,7 @@ def crear_servidor(
     servidor = _Servidor((host, puerto), _ManejadorPantalla)
     servidor.salidas = salidas  # type: ignore[attr-defined]
     servidor.estaticos = estaticos  # type: ignore[attr-defined]
-    servidor.raiz_repos = raiz_repos  # type: ignore[attr-defined]
+    servidor.raiz_repos = raiz_repos or config.raiz_local()  # type: ignore[attr-defined]  # D44: se lee al llamar
     servidor.comando = comando or (lambda args: [sys.executable, "-m", "enjambre.leer", *args])  # type: ignore[attr-defined]
     servidor.raiz_cola = raiz_cola or cola_mod.RAIZ_COLA  # type: ignore[attr-defined]
     servidor.cerrojo = cerrojo or cerrojo_mod.RUTA  # type: ignore[attr-defined]
@@ -909,8 +910,9 @@ def _crear_analizador() -> argparse.ArgumentParser:
     # Mismo patrón que enjambre.orquestar._crear_analizador: absoluto y
     # relativo a este fichero, no al cwd desde donde se invoque.
     raiz = Path(__file__).resolve().parent.parent
-    analizador.add_argument("--host", default="100.87.64.121")  # nunca 0.0.0.0 (D12)
-    analizador.add_argument("--puerto", type=int, default=8790)
+    # D44: sin --host sale de `config.host()` (ENJAMBRE_HOST o 127.0.0.1); nunca 0.0.0.0 (D12).
+    analizador.add_argument("--host", default=None)
+    analizador.add_argument("--puerto", type=int, default=None)
     analizador.add_argument("--salidas", type=Path, default=raiz / "salidas")
     analizador.add_argument("--estaticos", type=Path, default=raiz / "pantalla")
     return analizador
@@ -919,8 +921,10 @@ def _crear_analizador() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """`python -m enjambre.pantalla [--host] [--puerto] [--salidas] [--estaticos]`."""
     args = _crear_analizador().parse_args(argv)
-    servidor = crear_servidor(args.host, args.puerto, args.salidas, args.estaticos)
-    print(f"pantalla escuchando en http://{args.host}:{servidor.server_address[1]}")
+    host = args.host or config.host()
+    puerto = config.puerto() if args.puerto is None else args.puerto
+    servidor = crear_servidor(host, puerto, args.salidas, args.estaticos)
+    print(f"pantalla escuchando en http://{host}:{servidor.server_address[1]}")
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:

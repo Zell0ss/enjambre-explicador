@@ -14,8 +14,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-RAIZ_NOTAS = Path("/data/library/mi-wiki/docs/Obsidian/Clippings/repo-articles")
-
 # Un run parado (tope de coste, interrumpido, fallo) no deja nota: el artículo
 # a medias no es el resultado (D28).
 FINALES = frozenset({"aprobado", "tope_vueltas"})

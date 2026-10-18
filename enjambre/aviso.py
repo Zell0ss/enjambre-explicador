@@ -10,33 +10,12 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from enjambre.config import cargar_env  # noqa: F401 -- sigue importable desde aquí (D44: vive en config)
+from enjambre import config
 from enjambre.registro import obtener_log
 from enjambre.tipos import Lectura
 
-# parent = enjambre/, parent.parent = raíz del repo.
-RUTA_ENV = Path(__file__).resolve().parent.parent / ".env"
 _LIMITE = 4096  # máximo de un mensaje de Telegram
-
-
-def cargar_env(ruta: Path = RUTA_ENV) -> dict[str, str]:
-    """`CLAVE=valor` por línea; sin fichero, vacío. Ignora comentarios y comillas."""
-    try:
-        lineas = ruta.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
-    env = {}
-    for linea in lineas:
-        linea = linea.strip()
-        if not linea or linea.startswith("#"):
-            continue
-        clave, sep, valor = linea.removeprefix("export ").partition("=")
-        if not sep:
-            continue
-        valor = valor.strip()
-        if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in "\"'":
-            valor = valor[1:-1]
-        env[clave.strip()] = valor
-    return env
 
 
 def _post_http(url: str, datos: dict) -> int:
@@ -50,7 +29,7 @@ def _post_http(url: str, datos: dict) -> int:
 
 def enviar(texto: str, *, env: dict | None = None, post=None) -> bool:
     """Manda `texto` por Telegram. `post(url, datos) -> código HTTP`."""
-    env = cargar_env() if env is None else env
+    env = config.cargar_env() if env is None else env
     token, chat = env.get("TELEGRAM_BOT_TOKEN"), env.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         _avisar("aviso: faltan TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID en el .env del enjambre, no se envía")

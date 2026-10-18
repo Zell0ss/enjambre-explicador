@@ -1,0 +1,3 @@
+# Lo que solo existe en seb01: LogCentral (D44, opcional). `pip install -r requirements-seb01.txt`
+-r requirements.txt
+-e /data/logcentral/packages/client

@@ -20,10 +20,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from enjambre import aviso, cerrojo
+from enjambre import aviso, cerrojo, config
 from enjambre import peso as peso_mod
-from enjambre.fuente import RAIZ_COPIAS, CopiaAjena, Fuente, FuenteInvalida, GitFallo, actualizar, resolver
-from enjambre.nota import FINALES, RAIZ_NOTAS, NotaAjena, comprobar, escribir, leer_frontmatter
+from enjambre.fuente import CopiaAjena, Fuente, FuenteInvalida, GitFallo, actualizar, resolver
+from enjambre.nota import FINALES, NotaAjena, comprobar, escribir, leer_frontmatter
 from enjambre.orquestar import orquestar, reanudar
 from enjambre.registro import obtener_log
 from enjambre.tipos import Lanzar, Lectura
@@ -34,7 +34,7 @@ class RepoCambiado(ValueError):
 
 
 # «You've hit your session limit · resets 2:40am (Europe/Madrid)». La CLI da la
-# hora en la zona de seb01, que es la del reloj local: no se convierte nada.
+# hora en la zona del reloj local de la máquina: no se convierte nada.
 _RESET = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)", re.IGNORECASE)
 
 
@@ -98,8 +98,8 @@ def _escribir_nota(
 
 
 async def leer(
-    f: Fuente, *, salidas: Path, lanzar: Lanzar, raiz_copias: Path = RAIZ_COPIAS,
-    raiz_notas: Path = RAIZ_NOTAS, tope_usd: float = 5.0, max_vueltas: int | None = 2,
+    f: Fuente, *, salidas: Path, lanzar: Lanzar, raiz_copias: Path | None = None,
+    raiz_notas: Path | None = None, tope_usd: float = 5.0, max_vueltas: int | None = 2,
     run: str | None = None, falso: bool = False, reanudar: Path | None = None,
     saltar_si_igual: bool = False, remoto: str | None = None, ahora=datetime.now,
     si_cambio: Literal["nuevo", "error"] = "nuevo",
@@ -112,6 +112,9 @@ async def leer(
     D30: allí sí se pidió leer el repo) y `"error"` lanza `RepoCambiado` antes
     de lanzar nada ("Continuar" promete seguir con lo ya pagado, no gastar en
     un run entero que nadie pidió)."""
+    # D44: los valores por defecto (de `.env` o genéricos) se resuelven al llamar, no en la firma.
+    raiz_copias = raiz_copias or config.raiz_copias()
+    raiz_notas = raiz_notas or config.raiz_notas()
     # R3 (revisión de H2): un choque de nombre con una nota ajena se sabe ya, y
     # no hay que pagar un run entero para descubrirlo. Con `falso` la nota no va al vault.
     if not falso:
@@ -247,7 +250,7 @@ def ultimo_parado(salidas: Path, fuente: str, *, falso: bool = False) -> Path | 
 
 def _crear_analizador() -> argparse.ArgumentParser:
     a = argparse.ArgumentParser(prog="python -m enjambre.leer")
-    a.add_argument("fuente", nargs="?", default=None, help="URL de GitHub o ruta bajo /data")
+    a.add_argument("fuente", nargs="?", default=None, help="URL de GitHub o ruta bajo ENJAMBRE_RAIZ_LOCAL")
     a.add_argument("--reanudar", type=Path, default=None)
     a.add_argument("--tope-usd", type=float, default=5.0)
     a.add_argument("--max-vueltas", type=int, default=None)

@@ -150,7 +150,7 @@ def como_dict(p: Peso, e: Estimacion) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     a = argparse.ArgumentParser(prog="python -m enjambre.peso")
-    a.add_argument("fuente", help="URL de GitHub o ruta bajo /data")
+    a.add_argument("fuente", help="URL de GitHub o ruta bajo ENJAMBRE_RAIZ_LOCAL")
     a.add_argument("--tope-usd", type=float, default=5.0)
     args = a.parse_args(argv)
     try:
