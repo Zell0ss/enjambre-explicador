@@ -503,12 +503,14 @@ async def orquestar(
     falso: bool = False,
     fuente: str | None = None,
     commit: str | None = None,
+    peso: dict | None = None,
 ) -> dict:
     """Lanza el enjambre sobre `repo` y devuelve el evento `run_fin`.
 
     Fase 3: `fuente` y `commit` (de dónde salió el repo y qué versión se lee)
     van al nivel superior de `run_inicio`, siempre presentes y quizá `None`:
-    es un campo añadido, que la regla de compatibilidad de §4 permite.
+    es un campo añadido, que la regla de compatibilidad de §4 permite. Igual
+    `peso` (D40: lo que `enjambre.peso` estimó antes de gastar; `None` si falló).
 
     D24: `falso` no decide qué `lanzar` se usa -- eso lo sigue eligiendo
     quien llama (`main`), igual que antes -- solo se anota en
@@ -543,6 +545,7 @@ async def orquestar(
             roles={rol: a.modelo for rol, a in agentes.items()},
             fuente=fuente,
             commit=commit,
+            peso=peso,
         )
         for rol in ("cartografo", "despiezador", "trazador", "redactor", "verificador", "novato"):
             eventos.emitir("estado", rol, estado="esperando")

@@ -394,3 +394,18 @@ async def test_leer_rellena_reintentar_a_si_el_run_para_por_el_limite(e):
 async def test_leer_no_pone_reintentar_a_si_acaba(e):
     l = await leer(_f(e), lanzar=hacer_lanzar_falso(), run="r1", **_kw(e))
     assert l.reintentar_a is None
+
+
+# --- D40 (anexo 2026-10-17, Tarea 28): normativas, tal cual ---
+async def test_run_nuevo_guarda_el_peso(e):
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), **_kw(e))
+    peso = _eventos(l.salida)[0]["peso"]
+    assert peso["ficheros"] == 1 and peso["banda"] == "S" and peso["alerta"] == "cabe"
+
+
+async def test_el_peso_no_para_la_lectura(e, monkeypatch):
+    import enjambre.peso as peso_mod
+    def roto(_): raise OSError("disco")
+    monkeypatch.setattr(peso_mod, "pesar", roto)
+    l = await leer(_f(e), lanzar=hacer_lanzar_falso(), **_kw(e))
+    assert l.motivo == "aprobado" and _eventos(l.salida)[0]["peso"] is None

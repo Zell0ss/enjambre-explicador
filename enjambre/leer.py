@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Literal
 
 from enjambre import aviso, cerrojo
+from enjambre import peso as peso_mod
 from enjambre.fuente import RAIZ_COPIAS, CopiaAjena, Fuente, FuenteInvalida, GitFallo, actualizar, resolver
 from enjambre.nota import FINALES, RAIZ_NOTAS, NotaAjena, comprobar, escribir, leer_frontmatter
 from enjambre.orquestar import orquestar, reanudar
+from enjambre.registro import obtener_log
 from enjambre.tipos import Lanzar, Lectura
 
 
@@ -149,7 +151,7 @@ async def leer(
 
     fin = await orquestar(
         ruta, salidas, lanzar, tope_usd=tope_usd, max_vueltas=2 if max_vueltas is None else max_vueltas,
-        run=run, falso=falso, fuente=f.texto, commit=commit,
+        run=run, falso=falso, fuente=f.texto, commit=commit, peso=_peso_de(ruta, tope_usd),
     )
     salida = salidas / ruta.name / fin["run"]
     coste = fin["coste_total_usd"]
@@ -157,6 +159,17 @@ async def leer(
     return Lectura(fuente=f.texto, nombre=f.nombre, commit=commit, run=fin["run"], salida=salida,
                    motivo=fin["motivo"], vueltas=fin["vueltas"], coste_usd=coste, nota=nota,
                    reintentar_a=_reintentar_a(salida, fin["motivo"]))
+
+
+def _peso_de(ruta: Path, tope_usd: float) -> dict | None:
+    """D40: el peso y la banda de coste de un run NUEVO, para `run_inicio.peso`.
+    Es informativo: si falla, un warning y el run sigue sin él."""
+    try:
+        p = peso_mod.pesar(ruta)
+        return peso_mod.como_dict(p, peso_mod.estimar(p, tope_usd))
+    except (OSError, GitFallo) as e:
+        obtener_log().warning(f"leer: no se pudo pesar {ruta}: {e}")
+        return None
 
 
 def _reintentar_a(salida: Path, motivo: str) -> datetime | None:

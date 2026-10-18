@@ -635,3 +635,57 @@ def test_d36_lanzador_da_el_error_aunque_el_run_exista(fase3, codigo, con_error)
                           "error": "RepoCambiado: el repo ha cambiado desde que se paró (abc1234 → def5678): lanza uno nuevo"}
     else:
         assert estado == {"en_marcha": False, "repo": None, "run": None}
+
+
+# --- D40 (anexo 2026-10-17, Tarea 28): normativas, tal cual ---
+def test_pesar_una_fuente_local(fase3):
+    (fase3.raiz / "agora" / "a.py").write_text("x" * 400)
+    c, r = _post(fase3.base + "/api/pesar", {"repo": str(fase3.raiz / "agora")})
+    assert c == 200 and r["peso"]["bytes_codigo"] == 400 and r["estimacion"]["banda"] == "S"
+    assert r["texto"].startswith("1 ficheros, 0 kB · código 0 kB (~0k tokens) · S")
+    assert fase3.vistos == []          # no lanza nada
+
+
+def test_pesar_rechaza_lo_que_no_es_una_fuente(fase3):
+    assert _post(fase3.base + "/api/pesar", {"repo": "/etc"})[0] == 400
+    assert _post(fase3.base + "/api/pesar", {"repo": "https://github.com/x/a"}, cabeceras=False)[0] == 403
+
+
+# --- añadidas (no normativas) ---
+
+def test_pesar_una_url_con_la_funcion_inyectada(fase3):
+    from enjambre.peso import Peso
+    visto = []
+    fase3.server.pesar = lambda f: visto.append(f.texto) or Peso(10, 40_000, 5, 20_000)
+    c, r = _post(fase3.base + "/api/pesar", {"repo": "https://github.com/X/Proyecto.git", "tope_usd": 3})
+    assert c == 200 and visto == ["https://github.com/x/proyecto"] and r["estimacion"]["tope_usd"] == 3
+    assert r["estimacion"]["alerta"] == "cabe" and fase3.vistos == []
+
+
+def test_pesar_con_git_fallido_es_502(fase3):
+    from enjambre.fuente import GitFallo
+
+    def falla(f):
+        raise GitFallo("git clone falló (128): repo privado o inexistente")
+    fase3.server.pesar = falla
+    c, r = _post(fase3.base + "/api/pesar", {"repo": "https://github.com/x/privado"})
+    assert c == 502 and "privado" in r["error"]
+
+
+@pytest.mark.parametrize("cuerpo", [{"repo": "https://github.com/x/a", "tope_usd": 0},
+                                    {"repo": "https://github.com/x/a", "tope_usd": 50},
+                                    {"repo": "https://github.com/x/a", "tope_usd": True}, {}])
+def test_pesar_valida_el_cuerpo(fase3, cuerpo):
+    assert _post(fase3.base + "/api/pesar", cuerpo)[0] == 400
+
+
+def test_pesar_no_toma_el_cerrojo(fase3):
+    # Pesar es de solo lectura y no debe estorbar a un run en marcha (ni esperar a la cola).
+    p = subprocess.Popen([sys.executable, "-c", _RETENER, str(fase3.cerrojo)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == "ok"
+        (fase3.raiz / "agora" / "a.py").write_text("x" * 40)
+        assert _post(fase3.base + "/api/pesar", {"repo": str(fase3.raiz / "agora")})[0] == 200
+    finally:
+        p.kill()
+        p.wait()

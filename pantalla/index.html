@@ -593,6 +593,13 @@
   .cola-noche .fallida {
     color: #ff9ecb;
   }
+  .form-lanzar .texto-peso {
+    width: 100%;
+    color: #9fb4cc;
+  }
+  .form-lanzar .texto-peso.no-cabe {
+    color: #ff6b6b;
+  }
   .form-lanzar .ok-encolar {
     width: 100%;
     color: #8fd18f;
@@ -620,10 +627,12 @@
     <label>tope $ <input id="f-tope" type="number" value="5" min="0" max="10" step="0.5" /></label>
     <label>vueltas <input id="f-vueltas" type="number" value="2" min="0" max="3" /></label>
     <label><input id="f-falso" type="checkbox" checked /> falso (sin gastar)</label>
+    <button id="btn-pesar" type="button">Pesar</button>
     <button id="btn-lanzar" type="submit">Lanzar ahora</button>
     <button id="btn-encolar" type="button">Encolar para esta noche</button>
     <span id="error-lanzar" class="error-lanzar"></span>
     <span id="ok-encolar" class="ok-encolar"></span>
+    <span id="texto-peso" class="texto-peso"></span>
   </form>
 
   <!-- D33: la cola de la noche (D29). La rellena mesa.js (`_cargarCola`). -->

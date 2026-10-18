@@ -35,7 +35,8 @@ from pathlib import Path
 # que la pantalla nunca llama; `tests/test_pantalla.py` lo comprueba.
 from enjambre import cerrojo as cerrojo_mod
 from enjambre import cola as cola_mod
-from enjambre.fuente import Fuente, FuenteInvalida, resolver
+from enjambre import peso as peso_mod
+from enjambre.fuente import Fuente, FuenteInvalida, GitFallo, resolver
 
 # Raíz de ESTE repo (enjambre-explicador), no la del repo que se vaya a
 # analizar -- el subproceso de un run lanzado desde la página (anexo
@@ -268,7 +269,7 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
         preflight falla antes de que el navegador llegue a mandar el POST
         de verdad."""
         ruta = urllib.parse.urlsplit(self.path).path
-        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar", "/api/encolar"):
+        if ruta not in ("/api/lanzar", "/api/parar", "/api/reanudar", "/api/encolar", "/api/pesar"):
             self.send_error(404)
             return
 
@@ -283,6 +284,8 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             self._parar()
         elif ruta == "/api/encolar":
             self._encolar()
+        elif ruta == "/api/pesar":
+            self._pesar()
         else:
             self._reanudar()
 
@@ -489,6 +492,50 @@ class _ManejadorPantalla(BaseHTTPRequestHandler):
             return
         peticion = json.loads(ruta.read_text(encoding="utf-8"))
         self._responde_json(201 if nuevo else 200, {"fuente": peticion["fuente"], "nombre": peticion["nombre"], "nuevo": nuevo})
+
+    def _pesar(self) -> None:
+        """`POST /api/pesar` (D40): cuánto pesa una fuente y cuánto costaría leerla, antes
+        de gastar. Misma validación de fuente que `/api/encolar`. No toma el cerrojo ni
+        lanza subprocesos: una URL se clona en un temporal que se borra (nunca en
+        `RAIZ_COPIAS`), sin gastar tokens."""
+        longitud = int(self.headers.get("Content-Length") or 0)
+        crudo = self.rfile.read(longitud) if longitud > 0 else b""
+        try:
+            cuerpo = json.loads(crudo) if crudo else {}
+        except json.JSONDecodeError:
+            self._responde_json(400, {"error": "cuerpo no es JSON válido"})
+            return
+        if not isinstance(cuerpo, dict):
+            self._responde_json(400, {"error": "cuerpo debe ser un objeto JSON"})
+            return
+        repo = cuerpo.get("repo")
+        if not isinstance(repo, str) or not repo:
+            self._responde_json(400, {"error": "repo debe ser una URL de GitHub o una ruta no vacía"})
+            return
+        tope_usd = cuerpo.get("tope_usd", 5)
+        if isinstance(tope_usd, bool) or not isinstance(tope_usd, (int, float)) or not (0 < tope_usd <= 10):
+            self._responde_json(400, {"error": "tope_usd debe ser un número mayor que 0 y como mucho 10"})
+            return
+        try:
+            fuente = resolver(repo, raiz_local=self.server.raiz_repos)  # type: ignore[attr-defined]
+        except FuenteInvalida as e:
+            self._responde_json(400, {"error": str(e)})
+            return
+        except (OSError, RuntimeError, ValueError):
+            self._responde_json(400, {"error": "repo no es una ruta válida"})
+            return
+        try:
+            p = self.server.pesar(fuente)  # type: ignore[attr-defined]
+        except (GitFallo, OSError) as e:
+            self._responde_json(502, {"error": str(e)})
+            return
+        e = peso_mod.estimar(p, float(tope_usd))
+        dato = peso_mod.como_dict(p, e)
+        self._responde_json(200, {
+            "texto": peso_mod.texto(p, e),
+            "peso": {k: dato[k] for k in ("ficheros", "bytes", "ficheros_codigo", "bytes_codigo", "tokens")},
+            "estimacion": {k: dato[k] for k in ("banda", "usd_min", "usd_max", "tope_usd", "alerta")},
+        })
 
     def _servir_cola(self) -> None:
         raiz = self.server.raiz_cola  # type: ignore[attr-defined]
@@ -785,6 +832,7 @@ def crear_servidor(
     dir_logs: Path = _RAIZ_ENJAMBRE / "logs" / "lanzamientos",
     raiz_cola: Path | None = None,
     cerrojo: Path | None = None,
+    pesar: Callable[[Fuente], peso_mod.Peso] | None = None,
 ) -> ThreadingHTTPServer:
     """Crea el servidor sin arrancarlo (el llamador decide hilo/`serve_forever`,
     como hace `tests/test_pantalla.py` y `main` de abajo).
@@ -817,6 +865,7 @@ def crear_servidor(
     servidor.comando = comando or (lambda args: [sys.executable, "-m", "enjambre.leer", *args])  # type: ignore[attr-defined]
     servidor.raiz_cola = raiz_cola or cola_mod.RAIZ_COLA  # type: ignore[attr-defined]
     servidor.cerrojo = cerrojo or cerrojo_mod.RUTA  # type: ignore[attr-defined]
+    servidor.pesar = pesar or peso_mod.pesar_fuente  # type: ignore[attr-defined]  # D40: inyectable en pruebas
     servidor.dir_logs = dir_logs  # type: ignore[attr-defined]
     # Un run a la vez (D21): `lock` protege el check-y-arranca de
     # `_lanzar`/`_parar` contra dos POST concurrentes; `proc`/`proc_repo`/

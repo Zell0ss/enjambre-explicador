@@ -130,6 +130,8 @@ def _git(args: list[str], cwd: Path | None, timeout_s: float) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Un nombre de fichero que no sea UTF-8 (`ls-files`) no debe tumbar la lectura.
+            errors="replace",
             start_new_session=True,
         )
     except OSError as e:
@@ -150,6 +152,39 @@ def _git(args: list[str], cwd: Path | None, timeout_s: float) -> str:
             pista = " (¿repo privado o inexistente?)"
         raise GitFallo(f"git {args[0]} falló ({p.returncode}): {ultima.strip()}{pista}")
     return salida.strip()
+
+
+def ficheros(ruta: Path, timeout_s: float = 60) -> list[str] | None:
+    """Rutas relativas que sigue git (`ls-files -z`), o `None` si `ruta` no es la
+    raíz de un repo (carpeta sin git, o un subdirectorio de otro repo: `git`
+    actuaría sobre el de arriba). Solo lee: no modifica nada (D40)."""
+    if not (ruta / ".git").exists():
+        return None
+    try:
+        raiz = Path(_git(["rev-parse", "--show-toplevel"], ruta, timeout_s)).resolve()
+    except GitFallo:
+        return None
+    if raiz != ruta.resolve():
+        return None
+    salida = _git(["ls-files", "-z"], ruta, timeout_s)
+    return [r for r in salida.split("\0") if r]
+
+
+def clonar(f: Fuente, destino: Path, *, remoto: str | None = None, timeout_s: float = 120) -> str:
+    """Clon `--depth 1` de una URL en `destino` (que no existe) y devuelve su commit.
+
+    Sin marca D38: es un temporal (D40, `peso.pesar_fuente`), nunca una copia de
+    `raiz_copias`. Si falla, no queda nada a medias."""
+    if f.url is None:
+        raise FuenteInvalida("solo se clona una URL de GitHub")
+    if destino.exists():
+        raise FileExistsError(f"{destino} ya existe")
+    try:
+        _git(["clone", "--depth", "1", "--", remoto or f.url, str(destino)], None, timeout_s)
+        return _commit(destino, timeout_s)
+    except GitFallo:
+        shutil.rmtree(destino, ignore_errors=True)  # no existía antes: es todo nuestro
+        raise
 
 
 def _canonico(url: str) -> str:

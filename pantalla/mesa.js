@@ -913,6 +913,45 @@ async function _instalarFormularioLanzar(form) {
 
   const btnEncolar = document.getElementById("btn-encolar");
   const ok = document.getElementById("ok-encolar");
+
+  // D40: «Pesar» -- cuánto pesa la fuente y cuánto costaría leerla, antes de gastar.
+  // Solo informa (no lanza ni encola); en rojo si no cabe en el tope.
+  const btnPesar = document.getElementById("btn-pesar");
+  const textoPeso = document.getElementById("texto-peso");
+  if (btnPesar) {
+    btnPesar.onclick = async () => {
+      if (error) error.textContent = "";
+      if (textoPeso) {
+        textoPeso.textContent = "pesando… (una URL se clona sin gastar tokens)";
+        textoPeso.classList.remove("no-cabe");
+      }
+      btnPesar.disabled = true;
+      const repo = (document.getElementById("f-repo") || {}).value?.trim() || "";
+      const tope_usd = Number((document.getElementById("f-tope") || {}).value) || 5;
+      try {
+        const resp = await fetch("/api/pesar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Enjambre": "1" },
+          body: JSON.stringify({ repo, tope_usd }),
+        });
+        const cuerpo = await resp.json().catch(() => ({}));
+        if (resp.status === 200) {
+          if (textoPeso) {
+            textoPeso.textContent = cuerpo.texto;
+            textoPeso.classList.toggle("no-cabe", cuerpo.estimacion && cuerpo.estimacion.alerta === "no cabe");
+          }
+        } else {
+          if (textoPeso) textoPeso.textContent = "";
+          if (error) error.textContent = cuerpo.error || `error ${resp.status} al pesar`;
+        }
+      } catch (err) {
+        if (textoPeso) textoPeso.textContent = "";
+        if (error) error.textContent = `no se pudo contactar con el servidor: ${err}`;
+      } finally {
+        btnPesar.disabled = false;
+      }
+    };
+  }
   if (btnEncolar) {
     btnEncolar.onclick = async () => {
       if (error) error.textContent = "";
